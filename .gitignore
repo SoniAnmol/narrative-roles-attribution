@@ -1,0 +1,7 @@
+/.conda
+/.mypy_cache
+/.vscode
+/.venv
+/data
+/output
+/model
