@@ -13,7 +13,6 @@ import datetime
 import matplotlib.pyplot as plt
 nltk.download('punkt')
 
-# nltk.download("punkt")
 
 
 def detect_language(text):

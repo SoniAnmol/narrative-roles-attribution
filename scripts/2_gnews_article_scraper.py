@@ -10,7 +10,6 @@ from gnews import GNews
 from newspaper import Article
 import os
 import ast
-from scripts.scrape_gnews import parse_publisher
 from newspaper import Config
 
 

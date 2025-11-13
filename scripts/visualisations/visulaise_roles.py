@@ -163,27 +163,17 @@ def plot_cooccurring_character_roles(
 # main
 if __name__ == "__main__":
     # * read files
-    df = pd.read_csv("../output/predicted_results.csv.gz", compression="gzip")
-    performance = pd.read_excel("../output/prediction_performance.xlsx")
-    actor_directory = pd.read_csv("../data/actor_entity_directory_v2.csv")
+    df = pd.read_csv("../../output/predicted_results.csv.gz", compression="gzip")
+    performance = pd.read_excel("../../output/prediction_performance.xlsx")
+    actor_directory = pd.read_csv("../../data/actor_entity_directory_v2.csv")
 
     # %%
     # * Prepare actor directory
     actor_directory = actor_directory[actor_directory.keep == 1].reset_index(drop=True)
     actor_directory = dict(zip(actor_directory["category"], actor_directory["actor"]))
-    actor_directory["municipalities"] = "local government"
+    actor_directory["municipalities"] = "municipalities"
     actor_directory["region"] = "regional government"
-
-    # %%
-
-    # * prepare the table with example narratives
-    sampled_df = df.groupby("predicted_character_role", group_keys=False).apply(
-        lambda x: x.drop_duplicates(subset="article_index").sample(
-            n=min(10, len(x.drop_duplicates(subset="article_index"))), replace=False
-        )
-    )
-    # save to a new file
-    sampled_df.to_excel("../output/sample_character_roles_v2.xlsx", index=False)
+    actor_directory["bad weather"] = "extreme event"
 
     # %%
     # * Filter for character roles with acceptable f1 score
@@ -243,16 +233,9 @@ if __name__ == "__main__":
 
     # %%
     # * plot_predicted_character_role_over_time
-    plot_predicted_character_role_over_time(df, top_n=10, output_file="../figures/character_roles_over_time_10.png")
+    plot_predicted_character_role_over_time(df, top_n=10, output_file="../../figures/character_roles_over_time_10.png")
 
-    # %%
-    plot_cooccurring_character_roles(
-        df,
-        role_col="predicted_character_role",
-        group_col="article_index",  # or "sentence_index"
-        top_n=10,
-        output_file="../figures/cooccurrence_grid_10.png",
-    )
+
 
     # %%
     # * subset df for narrative roles
@@ -263,16 +246,8 @@ if __name__ == "__main__":
     for role in narrative_roles:
         subset_df = df[df["predicted_character_role"].str.endswith(f"-{role}")]
         plot_predicted_character_role_over_time(
-            subset_df, top_n=10, output_file=f"../figures/character_roles_over_time_{role}.png"
+            subset_df, top_n=10, output_file=f"../../figures/character_roles_over_time_{role}.png"
         )
-        plot_cooccurring_character_roles(
-            subset_df,
-            role_col="predicted_character_role",
-            group_col="article_index",  # or "sentence_index"
-            top_n=10,
-            output_file=f"../figures/cooccurrence_grid_{role}.png",
-        )
-
         subset_df["count"] = 1  # Creates a column with a constant value
         avg_count = subset_df.groupby(["sentence_index", "predicted_character_role"])["count"].mean().reset_index()
         avg_count = avg_count.predicted_character_role.value_counts()
