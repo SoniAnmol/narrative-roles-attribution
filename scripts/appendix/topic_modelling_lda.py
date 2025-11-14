@@ -12,7 +12,7 @@ from gensim.models.ldamodel import LdaModel
 from nltk.corpus import stopwords
 import pyLDAvis
 import pyLDAvis.gensim_models as gensimvis
-from translate_articles import detect_language
+from news_data_preparation import detect_language
 
 
 # ------------------------------ Define methods ------------------------------ #

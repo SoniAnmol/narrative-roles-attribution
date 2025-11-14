@@ -23,7 +23,6 @@ def clean_roles(df, preprocessor, output_path=None):
     df.loc[:, ["ARG0", "B-V", "ARG1"]] = pd.DataFrame(postproc_roles)[["ARG0", "B-V", "ARG1"]]
     return df
 
-
 def perform_srl(
     df, preprocessor, model_path="https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz"
 ):
@@ -60,7 +59,6 @@ def perform_srl(
     df = pd.merge(df, roles_df, on="sentence_index")
 
     return df
-
 
 def set_preprocessor(spacy_model="en_core_web_sm", add_stop_words=None, n_process=-1):
     """ "Sets the preprocessor for cleaning the text
@@ -124,7 +122,6 @@ def set_preprocessor(spacy_model="en_core_web_sm", add_stop_words=None, n_proces
 
     return p
 
-
 def split_sentences(
     df,
     preprocessor,
@@ -148,7 +145,6 @@ def split_sentences(
     # create an index for mapping sentences
     df["sentence_index"] = np.arange(len(df))
     return df
-
 
 # %%-------------------------------------------------------------------------- #
 #                                     Main                                     #
