@@ -319,7 +319,6 @@ if __name__ == "__main__":
     # Compute sentiment on unique sentences
     sentiment_df = compute_sentiment(sentences, tokenizer, model)
 
-    # %%Merge back
     sentences = sentences.merge(sentiment_df, on="sentence_global_id", how="left")
 
 
