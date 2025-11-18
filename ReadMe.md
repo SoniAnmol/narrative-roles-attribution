@@ -34,6 +34,16 @@ pynpf
 - Narrative character-roles framework
 - Survey data from flood-affected communes
 
+## Sequence of running scripts
+The scripts must be executed in the following order:
+1. **gnews_articles_scraper.py** Download the articles from Google News
+1. **lexis_nexis_to_dataframe.py** Create dataframe from articles downloaded from Lexis-Nexis 
+1. **news_data_preparation.py** Clean and prepare the text corpus
+1. **named_entitiy_recognition.py** Extract named enities from the corpus
+1. **extract_svos.py** Split the corpus into sentences and extract Subject-Verb-Objects
+1. **sample_data_for_annotation.py** Sample sentences for annotation
+1. **training_model.py** Train model to classify Narrative Character Roles
+
 ## Key Findings
 - Media emphasized immediate impacts and institutional responses.
 - Residents, particularly from floods affected commmunes more frequently attributed floods to climate change.

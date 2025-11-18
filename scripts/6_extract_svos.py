@@ -11,6 +11,7 @@ from relatio import Preprocessor
 from relatio import extract_roles
 import datetime
 import spacy
+from pathlib import Path
 
 
 # %%-------------------------------------------------------------------------- #
@@ -123,55 +124,94 @@ def set_preprocessor(spacy_model="en_core_web_sm", add_stop_words=None, n_proces
     return p
 
 def split_sentences(
-    df,
-    preprocessor,
-    spacy_model="en_core_web_sm",
-):
-    """Splits the text data into multiple sentences
-    Args:
-    df: A pandas data frame with columns 'doc' containing text data
-    Returns:
-    df: DataFrame with processed sentences with 'id' representing doc id and sentence_id
+    df: pd.DataFrame,
+    text_col: str = "doc",
+    id_col: str = "id",
+    spacy_model: str = "en_core_web_sm"
+) -> pd.DataFrame:
     """
-    # check for 'id' in df columns; if not create a new column called 'id'
-    if "id" not in df.columns:
-        # create a unique id for all the articles
-        df["id"] = np.arange(len(df))
+    Split long documents into individual sentences using spaCy's sentence segmenter.
 
-    # split into sentences
-    df_sentences = preprocessor.split_into_sentences(df, output_path=None, progress_bar=True)
-    # combine df of sentences with original df
-    df = pd.merge(df_sentences, df, on="id")  # type: ignore
-    # create an index for mapping sentences
-    df["sentence_index"] = np.arange(len(df))
-    return df
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame containing one document per row.
+    text_col : str
+        Column name containing the full raw text.
+    id_col : str
+        Column name to treat as document ID. If missing, IDs are created.
+    spacy_model : str
+        spaCy model to use for sentence segmentation.
+
+    Returns
+    -------
+    pd.DataFrame
+        A new DataFrame with:
+        - doc_id (original document ID)
+        - sentence_id (index of sentence within the doc)
+        - sentence (the extracted sentence)
+        - sentence_global_id (unique index over all sentences)
+    """
+
+    # Ensure ID column exists
+    if id_col not in df.columns:
+        df[id_col] = np.arange(len(df))
+
+    nlp = spacy.load(spacy_model, disable=["ner", "tagger"])
+    nlp.add_pipe("sentencizer")  # ensures reliable sentence splitting
+
+    all_sentences = []
+    for doc_id, text in zip(df[id_col], df[text_col]):
+        if not isinstance(text, str):
+            continue
+        doc = nlp(text)
+
+        for i, sent in enumerate(doc.sents):
+            clean = sent.text.strip()
+            if clean:  # skip empty lines
+                all_sentences.append({
+                    "doc_id": doc_id,
+                    "sentence_id": i,
+                    "sentence": clean
+                })
+
+    # Build final DataFrame
+    out = pd.DataFrame(all_sentences)
+    out["sentence_global_id"] = np.arange(len(out))
+
+    return out
+
 
 # %%-------------------------------------------------------------------------- #
 #                                     Main                                     #
 # ---------------------------------------------------------------------------- #
 if __name__ == "__main__":
-
+    ROOT = Path(__file__).resolve().parent.parent 
     # * Read data
-    file_path = "data/prepared_data.csv.gz"
-    df = pd.read_csv(file_path)
+    file_path = ROOT / "data/news_corpus/"
+    file_name = "/news_corpus.csv.gz"
+    df = pd.read_csv(f'{file_path}{file_name}')
 
     # %%
     # * Split text data into sentences
     p = set_preprocessor()
     df["doc"] = df["translated_text"]
     # %%
-    df = split_sentences(df, p)
+    sentences = split_sentences(df, text_col="doc")
 
     # %%
     # * Semantic Role Labelling
-    df = perform_srl(df, p)
+    sentences = perform_srl(sentences, p)
 
-    # %%
+    # %% TODO fix and then run
     # * clean the roles - preprocess text
     df = clean_roles(df, p)
+
+    #%% TODO merge df with senteces
+    
 
     # %%
     # * export svos
     df.to_csv(
-        f"output/svo_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv.gz", compression="gzip", index=False
+        f"{file_path}/news_corpus_svo.csv.gz", compression="gzip", index=False
     )
