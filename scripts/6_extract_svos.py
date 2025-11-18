@@ -12,70 +12,114 @@ from relatio import extract_roles
 import datetime
 import spacy
 from pathlib import Path
+from transformers.models.auto import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification
+)
 
+import torch
 
 # %%-------------------------------------------------------------------------- #
 #                                    Methods                                   #
 # ---------------------------------------------------------------------------- #
 def clean_roles(df, preprocessor, output_path=None):
-    """Clean the roles and verbs"""
-    roles = df.apply(lambda row: {col: row[col] for col in df.columns if pd.notna(row[col])}, axis=1).tolist()
-    postproc_roles = preprocessor.process_roles(roles, max_length=100, progress_bar=True, output_path=output_path)
-    df.loc[:, ["ARG0", "B-V", "ARG1"]] = pd.DataFrame(postproc_roles)[["ARG0", "B-V", "ARG1"]]
+    """
+    Clean ARG roles and verbs after extraction.
+    Operates ONLY on available ARG columns.
+    """
+    # Identify role columns present
+    role_cols = [c for c in ["ARG0", "B-V", "ARG1", "ARG2"] if c in df.columns]
+
+    if not role_cols:
+        print("No role columns found — skipping clean_roles()")
+        return df
+
+    # Only pass role columns to the processor, one dict per row
+    roles = df[role_cols].to_dict(orient="records")
+
+    postproc = preprocessor.process_roles(
+        roles,
+        max_length=100,
+        progress_bar=True,
+        output_path=output_path
+    )
+
+    post_df = pd.DataFrame(postproc)
+
+    # Replace only the existing columns (keep robustness)
+    for col in role_cols:
+        if col in post_df.columns:
+            df[col] = post_df[col]
+
     return df
 
 def perform_srl(
-    df, preprocessor, model_path="https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz"
+    df,
+    preprocessor,
+    model_path="https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz"
 ):
     """
-    Performs semantic role labelling on the sentences
+    Run SRL + (optional) SVO extraction on sentence-level DataFrame.
+    Requires df to have: ["sentence", "sentence_index"].
     """
-    # create an instance of SRL class
-    from relatio import SRL
 
-    SRL = SRL(
+    # Safety check
+    if "sentence_index" not in df.columns:
+        df = df.reset_index(drop=False).rename(columns={"index": "sentence_index"})
+
+    # -----------------------------
+    # 1. RUN SRL
+    # -----------------------------
+    from relatio import SRL as SRLModel
+
+    srl_model = SRLModel(
         path=model_path,
         batch_size=10,
         cuda_device=-1,
     )
-    # Perform SRL
-    srl_res = SRL(df["sentence"], progress_bar=True)
 
-    # extract roles from srl results
-    roles, sentence_index = extract_roles(
+    srl_res = srl_model(df["sentence"].tolist(), progress_bar=True)
+
+    # Extract ARG roles
+    srl_roles, srl_idx = extract_roles(
         srl_res,
         used_roles=["ARG0", "B-V", "B-ARGM-NEG", "B-ARGM-MOD", "ARG1", "ARG2"],
-        # used_roles=["ARG0", "B-V", "B-ARGM-NEG", "ARG1", "ARG2"],
-        only_triplets=True,
+        only_triplets=False,
         progress_bar=True,
     )
-    # Extract SVO structures form SRL results
-    sentence_index, roles = preprocessor.extract_svos(
-        df["sentence"].to_list(), expand_nouns=True, only_triplets=True, progress_bar=True
+
+    srl_df = pd.DataFrame(srl_roles)
+    srl_df["sentence_index"] = srl_idx
+
+    # Merge SRL roles
+    df = df.merge(srl_df, on="sentence_index", how="left")
+
+    # -----------------------------
+    # 2. RUN SVO extraction
+    # -----------------------------
+    svo_idx, svo_roles = preprocessor.extract_svos(
+        df["sentence"].tolist(),
+        expand_nouns=True,
+        only_triplets=True,
+        progress_bar=True
     )
 
-    # update svos in df
-    roles_df = pd.DataFrame(roles)
-    roles_df["sentence_index"] = sentence_index
-    df = pd.merge(df, roles_df, on="sentence_index")
+    svo_df = pd.DataFrame(svo_roles)
+    svo_df["sentence_index"] = svo_idx
+
+    # Merge SVO roles (with suffix "_svo")
+    df = df.merge(svo_df, on="sentence_index", how="left", suffixes=("", "_svo"))
 
     return df
 
 def set_preprocessor(spacy_model="en_core_web_sm", add_stop_words=None, n_process=-1):
-    """ "Sets the preprocessor for cleaning the text
-    Args:
-    spacy_model: Spacy model to be used for cleaning the text
-    add_stop_words: list of additional stop words
-    Returns:
-    p: an instance of preprocessor class
-    """
-    #  Define stop-words to remove from sentences
+    """Initialize a relatio Preprocessor with custom stopwords."""
+
     stop_words = set(stopwords.words("english"))
 
-    if add_stop_words is not None:
+    if add_stop_words:
         stop_words.update(add_stop_words)
 
-    # initialise preprocessor to clean the sentences
     p = Preprocessor(
         spacy_model=spacy_model,
         remove_punctuation=True,
@@ -83,44 +127,13 @@ def set_preprocessor(spacy_model="en_core_web_sm", add_stop_words=None, n_proces
         lowercase=True,
         lemmatize=True,
         remove_chars=[
-            '"',
-            "-",
-            "^",
-            ".",
-            "?",
-            "!",
-            ";",
-            "(",
-            ")",
-            ",",
-            ":",
-            "'",
-            "+",
-            "&",
-            "|",
-            "/",
-            "{",
-            "}",
-            "~",
-            "_",
-            "`",
-            "[",
-            "]",
-            ">",
-            "<",
-            "=",
-            "*",
-            "%",
-            "$",
-            "@",
-            "#",
-            "’",
-            "\n",
+            '"', "-", "^", ".", "?", "!", ";", "(", ")", ",", ":", "'", "+", "&",
+            "|", "/", "{", "}", "~", "_", "`", "[", "]", ">", "<", "=", "*", "%",
+            "$", "@", "#", "’", "\n",
         ],
-        stop_words=stop_words,  # type: ignore
+        stop_words=stop_words,
         n_process=n_process,
     )
-
     return p
 
 def split_sentences(
@@ -181,6 +194,87 @@ def split_sentences(
 
     return out
 
+def load_local_roberta():
+    model_path = ROOT / "models/roberta-sentiment/" 
+
+    # auto-detects vocab.json + merges.txt (BPE tokenizer)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForSequenceClassification.from_pretrained(model_path)
+
+    return tokenizer, model
+
+def compute_sentiment(df_sentences, tokenizer, model):
+    """
+    Compute sentiment scores for unique sentences using a local transformer model.
+    Expects df_sentences to have columns: ["sentence_global_id", "sentence"].
+    """
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    # RoBERTa typically has max_position_embeddings = 514
+    max_pos = getattr(model.config, "max_position_embeddings", 512)
+
+    # For RoBERTa: we keep a small safety margin for special tokens
+    # (CLS + SEP) → so use max_length = max_pos - 2
+    if getattr(model.config, "model_type", "") == "roberta":
+        max_length = max_pos - 2
+    else:
+        max_length = max_pos
+
+    # 1) unique sentences only
+    unique = df_sentences[["sentence_global_id", "sentence"]].drop_duplicates()
+
+    labels = []
+    scores = []
+
+    sentences = unique["sentence"].tolist()
+    batch_size = 32
+
+    for i in range(0, len(sentences), batch_size):
+        batch = sentences[i:i + batch_size]
+
+        # Explicit max_length avoids the 514/515 issue
+        enc = tokenizer(
+            batch,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_tensors="pt"
+        )
+        enc = {k: v.to(device) for k, v in enc.items()}
+
+        with torch.no_grad():
+            out = model(**enc)
+
+        probs = out.logits.softmax(dim=1)
+
+        # Handle both 2-label (neg/pos) and 3-label (neg/neu/pos) models
+        num_labels = probs.shape[1]
+
+        batch_labels = probs.argmax(dim=1).cpu().numpy()
+        if num_labels == 3:
+            # score = P(pos) - P(neg)
+            batch_scores = (probs[:, 2] - probs[:, 0]).cpu().numpy()
+        elif num_labels == 2:
+            # binary: [neg, pos]
+            batch_scores = (probs[:, 1] - probs[:, 0]).cpu().numpy()
+        else:
+            # Fallback: use argmax probability as score
+            batch_scores = probs.max(dim=1).values.cpu().numpy()
+
+        labels.extend(batch_labels)
+        scores.extend(batch_scores)
+
+    unique["sentiment_label"] = labels
+    unique["sentiment_score"] = scores
+
+    return unique
+
+
+
+
+
 
 # %%-------------------------------------------------------------------------- #
 #                                     Main                                     #
@@ -203,15 +297,35 @@ if __name__ == "__main__":
     # * Semantic Role Labelling
     sentences = perform_srl(sentences, p)
 
-    # %% TODO fix and then run
-    # * clean the roles - preprocess text
-    df = clean_roles(df, p)
+    # %% clean the roles - preprocess text
+    sentences = clean_roles(sentences, p)
 
-    #%% TODO merge df with senteces
+    #%% drop non triplets
+    sentences = sentences.dropna(subset=['ARG0', 'B-V', 'ARG1'])
+
+    #%% generate SVO index
+    sentences.loc[:, 'svo_id'] = np.arange(len(sentences))
+
+    #%%  merge df with sentences
+    df.rename(columns={'article_index':'doc_id'}, inplace=True)
+    df.drop(columns=['id', 'translated_text'], inplace=True)
+    sentences = pd.merge(left=sentences, right=df, on='doc_id')
+
+    #%% TODO Perform sentiment analysis
     
+    # Load local model
+    tokenizer, model = load_local_roberta()
 
-    # %%
-    # * export svos
-    df.to_csv(
+    # Compute sentiment on unique sentences
+    sentiment_df = compute_sentiment(sentences, tokenizer, model)
+
+    # %%Merge back
+    sentences = sentences.merge(sentiment_df, on="sentence_global_id", how="left")
+
+
+    # %% export svos
+    sentences.to_csv(
         f"{file_path}/news_corpus_svo.csv.gz", compression="gzip", index=False
     )
+
+# %%
