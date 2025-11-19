@@ -2,7 +2,7 @@
 
 # ---------------------------------------------------------------------------- #
 # import libraries
-from appendix.topic_modelling_lda import preprocess_text
+from topic_modelling_lda import preprocess_text
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns

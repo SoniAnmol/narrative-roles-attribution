@@ -1,7 +1,43 @@
 """This script contains code to generate the data descriptive"""
 
-# %%
-# import libraries
+# %% define ROOT
+import sys
+from pathlib import Path
+
+def load_project_root():
+    """
+    Makes project root importable in ANY environment:
+    - normal scripts
+    - scripts in subfolders
+    - VS Code interactive window
+    - Jupyter notebooks
+    """
+    try:
+        # Try to detect "__file__" — exists for scripts
+        current = Path(__file__).resolve()
+    except NameError:
+        # "__file__" does not exist in notebooks → use cwd
+        current = Path.cwd().resolve()
+
+    # Traverse upward to find project_root.py
+    for parent in current.parents:
+        if (parent / "project_root.py").exists():
+            sys.path.append(str(parent))
+            return parent
+
+    raise FileNotFoundError("Could not locate project_root.py")
+
+# Execute loader
+ROOT = load_project_root()
+
+# Now import project_root module
+from project_root import get_project_root
+
+ROOT = get_project_root()
+sys.path.append(str(ROOT / "scripts"))
+print("PROJECT ROOT:", ROOT)
+
+#%% import libraries
 import pandas as pd
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
@@ -9,30 +45,36 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 from pathlib import Path
-from appendix.topic_modelling_bert import *
+# from topic_modelling_bert import *
+
+
 
 # Define methods
-# %%
+# %% methods
 
 def plot_articles_by_category_and_source(df, file_name):
     """
-    Plot a stacked bar chart showing the number of articles per publisher 
+    Plot a stacked bar chart showing the number of *articles* per publisher 
     category, broken down by source (gnews vs lexis-nexis).
 
-    Improvements:
-        - Larger font sizes for readability
-        - Reduced spacing between bars
-        - Minimalistic storytelling style (no grid, no y-axis)
-        - Total counts displayed above bars
+    Now:
+      - Aggregation is done at article-level (unique doc_id).
+      - Aesthetics are kept the same.
     """
 
-    # --- Prepare pivot table ---
+    # --- Collapse to article-level first ---
+    articles = (
+        df[["doc_id", "publisher_category", "source"]]
+        .drop_duplicates()
+    )
+
+    # --- Prepare pivot table: count articles per category & source ---
     pivot = (
-        df.pivot_table(
+        articles.pivot_table(
             index="publisher_category",
             columns="source",
-            values="title",
-            aggfunc="count",
+            values="doc_id",
+            aggfunc="count",      # number of unique articles
             fill_value=0
         )
     )
@@ -41,26 +83,17 @@ def plot_articles_by_category_and_source(df, file_name):
     pivot = pivot.sort_values("total", ascending=False)
     pivot_no_total = pivot.drop(columns="total")
 
-    # --- Plot styling ---
+    # --- Plot styling (unchanged) ---
     sns.set(style="white")
     fig, ax = plt.subplots(figsize=(14, 8))  # slightly larger
 
-    # Plot with reduced bar spacing (larger width)
     pivot_no_total.plot(
         kind="bar",
         stacked=True,
         ax=ax,
         color=["#1f77b4", "#ff7f0e"],
-        width=0.85,                       # << reduced spacing
+        width=0.85,                       # reduced spacing
     )
-
-    # --- Title & labels ---
-    # ax.set_title(
-    #     "Article Volume by Publisher Category and Source",
-    #     fontsize=22,
-    #     weight="bold",
-    #     pad=20
-    # )
 
     ax.set_xlabel("")
     ax.set_ylabel("")
@@ -68,7 +101,7 @@ def plot_articles_by_category_and_source(df, file_name):
     ax.tick_params(axis='x', labelrotation=45, labelsize=16)
     ax.tick_params(axis='y', labelsize=14)
 
-    # Remove chartjunk
+    # Minimalistic look
     ax.get_yaxis().set_visible(False)
     ax.grid(False)
     for spine in ["top", "right", "left"]:
@@ -83,12 +116,9 @@ def plot_articles_by_category_and_source(df, file_name):
             ha="center",
             va="bottom",
             fontsize=14,
-            # weight="bold"
         )
 
-    # --- Legend ---
-
-
+    # Legend
     ax.legend(
         title="Source",
         title_fontsize=14,
@@ -101,29 +131,76 @@ def plot_articles_by_category_and_source(df, file_name):
     plt.savefig(file_name)
     plt.show()
 
-def plot_top_publishers_barplot(df, output_path, column="publisher", top_n=10):
+def drop_short_documents(df, text_col="text", min_words=50):
     """
-    Plot the top-N publishers as a horizontal bar chart with category-based colors.
-    Robust to unseen or missing categories.
+    Removes all rows for any doc_id whose *article-level* word count 
+    is below the specified minimum.
+    
+    Word count is computed from the full article text in `text_col`.
     """
 
-    # Compute top publishers
-    top_publishers = df[column].value_counts().nlargest(top_n)
+    # Article text per doc_id (unique article)
+    article_text = df.groupby("doc_id")[text_col].first()
 
-    top_df = top_publishers.reset_index()
+    # Compute word count of each article
+    article_wc = article_text.apply(lambda x: len(str(x).split()))
+
+    # Identify short articles
+    short_docs = article_wc[article_wc < min_words].index.tolist()
+
+    print(f"Found {len(short_docs)} short articles (< {min_words} words).")
+    if short_docs:
+        print(f"Dropping doc_id values: {short_docs}")
+
+    # Drop all rows for short documents
+    df_cleaned = df[~df["doc_id"].isin(short_docs)].copy()
+
+    return df_cleaned
+
+
+def plot_top_publishers_barplot(df, output_path, top_n=10):
+    """
+    Plot the top-N publishers as a horizontal bar chart using ARTICLE-LEVEL counts
+    (unique doc_id per publisher), with category-based colors.
+
+    Also prints a summary table at the end.
+    """
+
+    # ============================================================
+    # 1. Collapse to article level (one row per article)
+    # ============================================================
+    articles = (
+        df[["doc_id", "publisher", "publisher_category"]]
+        .drop_duplicates()
+    )
+
+    # ============================================================
+    # 2. Compute top-N publishers by number of articles
+    # ============================================================
+    publisher_counts = (
+        articles["publisher"]
+        .value_counts()
+        .nlargest(top_n)
+    )
+
+    top_df = publisher_counts.reset_index()
     top_df.columns = ["publisher", "count"]
 
-    # Merge categories
+    # ============================================================
+    # 3. Merge categories
+    # ============================================================
     top_df = top_df.merge(
-        df[["publisher", "publisher_category"]].drop_duplicates(),
+        articles[["publisher", "publisher_category"]].drop_duplicates(),
         on="publisher",
         how="left"
     )
 
-    # Replace NaN categories with "other"
+    # Replace missing categories with "other"
     top_df["publisher_category"] = top_df["publisher_category"].fillna("other")
 
-    # Base palette (extendable)
+    # ============================================================
+    # 4. Color mapping
+    # ============================================================
     category_palette = {
         "national": "#1f77b4",
         "local": "#ff7f0e",
@@ -136,18 +213,18 @@ def plot_top_publishers_barplot(df, output_path, column="publisher", top_n=10):
         "other": "#bcbd22",
     }
 
-    # Fallback color for unknown categories
     fallback_color = "#999999"
 
-    # ---- SAFE color mapping (no KeyErrors) ----
     top_df["color"] = top_df["publisher_category"].apply(
         lambda x: category_palette.get(x, fallback_color)
     )
 
-    # Sort in descending order for barh
+    # Sort for horizontal bar plot
     top_df = top_df.sort_values("count", ascending=True)
 
-    # ---- Plot ----
+    # ============================================================
+    # 5. Plot
+    # ============================================================
     sns.set(style="white")
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -158,24 +235,15 @@ def plot_top_publishers_barplot(df, output_path, column="publisher", top_n=10):
         height=0.65
     )
 
-    # Title
-    # ax.set_title(
-    #     f"Top {top_n} Publishers",
-    #     fontsize=20,
-    #     weight="bold",
-    #     pad=15
-    # )
-
-    # Turn off x-axis
+    # Remove axes clutter
     ax.xaxis.set_visible(False)
     ax.set_xlabel("")
     ax.set_ylabel("")
 
-    # Remove spines
     for spine in ["top", "right", "bottom"]:
         ax.spines[spine].set_visible(False)
 
-    # Data labels
+    # Value labels
     max_count = top_df["count"].max()
     for i, count in enumerate(top_df["count"]):
         ax.text(
@@ -184,20 +252,17 @@ def plot_top_publishers_barplot(df, output_path, column="publisher", top_n=10):
             str(count),
             va="center",
             ha="left",
-            fontsize=14,
-            # weight="bold"
+            fontsize=13
         )
 
-    # ------------- LEGEND (Robust & Dynamic) ----------------
-    # Only categories actually present
-    present_categories = top_df["publisher_category"].unique()
-
+    # Legend (auto-detect included categories)
+    present_cats = top_df["publisher_category"].unique()
     legend_handles = [
         plt.matplotlib.patches.Patch(
             color=category_palette.get(cat, fallback_color),
             label=cat
         )
-        for cat in present_categories
+        for cat in present_cats
     ]
 
     ax.legend(
@@ -209,43 +274,52 @@ def plot_top_publishers_barplot(df, output_path, column="publisher", top_n=10):
         title_fontsize=13
     )
 
-    # Y-axis labels readable
     ax.tick_params(axis='y', labelsize=13)
-
     plt.tight_layout()
 
-    # Save
+    # Save figure
     plt.savefig(
         os.path.join(output_path, "top_publishers_barplot.png"),
         dpi=300,
         transparent=True
     )
-
     plt.show()
 
-def plot_word_count(df, output_path, text_column="text", x_limit=None):
+    # ============================================================
+    # 6. Print summary table
+    # ============================================================
+    summary_table = top_df[["publisher", "publisher_category", "count"]]
+    print("\n=== Top Publishers (Article-Level Counts) ===\n")
+    print(summary_table.to_string(index=False))
+
+    return summary_table
+
+
+def plot_word_count(df, output_path, sentence_col="sentence_x", x_limit=None):
     """
-    Clean storytelling distribution plot:
-        - thin outline histogram (no fill)
-        - smooth KDE curve
-        - subtle rug for distribution points
-        - key stats annotated on top
-        - clean, minimal, transparent style
+    Distribution of total word count PER ARTICLE.
+    Word count is computed by summing word counts across all sentences for each doc_id.
     """
 
-    # Compute word count
-    wc = df[text_column].apply(lambda x: len(x.split()))
-    
+    # --- Compute sentence-level word counts ---
+    df["sentence_word_count"] = df[sentence_col].apply(lambda x: len(str(x).split()))
+
+    # --- Aggregate to article level ---
+    article_wc = (
+        df.groupby("doc_id")["sentence_word_count"]
+        .sum()
+    )
+
     if x_limit:
-        wc = wc[wc <= x_limit]
+        article_wc = article_wc[article_wc <= x_limit]
 
-    # Stats
+    # --- Stats ---
     stats = {
-        "min": wc.min(),
-        "Q1": int(wc.quantile(0.25)),
-        "median": int(wc.median()),
-        "Q3": int(wc.quantile(0.75)),
-        "max": wc.max(),
+        "min": int(article_wc.min()),
+        "Q1": int(article_wc.quantile(0.25)),
+        "median": int(article_wc.median()),
+        "Q3": int(article_wc.quantile(0.75)),
+        "max": int(article_wc.max()),
     }
     stats_text = "  |  ".join([f"{k}={v}" for k, v in stats.items()])
 
@@ -253,102 +327,50 @@ def plot_word_count(df, output_path, text_column="text", x_limit=None):
     sns.set(style="white")
     fig, ax = plt.subplots(figsize=(16, 4))
 
-    # Light outline histogram (NO bars)
-    sns.histplot(
-        wc,
-        bins=40,
-        stat="density",
-        color="black",
-        fill=False,
-        edgecolor="#cccccc",
-        linewidth=1,
-        ax=ax
-    )
+    sns.histplot(article_wc, bins=40, stat="density",
+                 color="black", fill=False, edgecolor="#cccccc", linewidth=1)
 
-    # KDE
-    sns.kdeplot(
-        wc,
-        color="#2b6cb0",
-        linewidth=3,
-        ax=ax
-    )
+    sns.kdeplot(article_wc, color="#2b6cb0", linewidth=3)
+    sns.rugplot(article_wc, color="#2b6cb0", alpha=0.3, height=0.03)
 
-    # Rug (subtle)
-    sns.rugplot(
-        wc,
-        ax=ax,
-        color="#2b6cb0",
-        alpha=0.3,
-        height=0.03
-    )
+    ax.text(0.5, -0.35, stats_text, transform=ax.transAxes,
+            ha="center", fontsize=14, weight="bold")
 
-    # Title
-    # ax.set_title(
-    #     "Distribution of Article Word Count",
-    #     fontsize=22,
-    #     weight="bold",
-    #     pad=25
-    # )
+    ax.set_xlabel("Total Word Count per Article", fontsize=16)
 
-    # Stats annotation
-    ax.text(
-        0.5,
-        -0.35,
-        stats_text,
-        transform=ax.transAxes,
-        ha="center",
-        fontsize=14,
-        weight="bold"
-    )
-
-    # Labels
-    ax.set_xlabel("Word Count", fontsize=16)
-    # ax.set_ylabel("Density", fontsize=16)
-
-    # CLEAN THE LOOK
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
-    ax.tick_params(axis="x", labelsize=14)
+    ax.get_yaxis().set_ticks([])
     ax.grid(False)
-    ax.get_yaxis().set_ticks([])   # no y axis clutter
+    ax.tick_params(axis="x", labelsize=14)
 
     plt.tight_layout()
-    plt.savefig(
-        os.path.join(output_path, "word_count.png"),
-        dpi=300,
-        transparent=True
-    )
+    plt.savefig(os.path.join(output_path, "article_word_count.png"), dpi=300, transparent=True)
     plt.show()
 
-def plot_sentence_count(df, output_path, text_column="text", x_limit=None):
+def plot_sentence_count(df, output_path, x_limit=None):
     """
-    Clean storytelling distribution plot for sentence counts:
-        - thin outline histogram
-        - smooth KDE curve
-        - subtle rug plot
-        - key stats annotated above the title
-        - minimal FT-style aesthetic
+    Distribution of number of sentences per article.
+    Based on counting unique sentence_id within each doc_id.
     """
 
-    # --- Sentence Count Extraction ---
-    def count_sentences(text):
-        # Count ., ?, ! but avoid counting abbreviations like "e.g." or "U.S."
-        # Simple heuristic: sentence-ending punctuation followed by space or end of string.
-        return len(re.findall(r"[.!?](\s|$)", text))
-
-    sentence_count = df[text_column].apply(count_sentences)
+    # --- Compute sentence counts ---
+    sentence_count = (
+        df.groupby("doc_id")["sentence_id"]
+        .nunique()
+    )
 
     if x_limit:
         sentence_count = sentence_count[sentence_count <= x_limit]
 
     # --- Stats ---
     stats = {
-        "min": sentence_count.min(),
+        "min": int(sentence_count.min()),
         "Q1": int(sentence_count.quantile(0.25)),
         "median": int(sentence_count.median()),
         "Q3": int(sentence_count.quantile(0.75)),
-        "max": sentence_count.max(),
+        "max": int(sentence_count.max()),
     }
     stats_text = "  |  ".join([f"{k}={v}" for k, v in stats.items()])
 
@@ -356,107 +378,121 @@ def plot_sentence_count(df, output_path, text_column="text", x_limit=None):
     sns.set(style="white")
     fig, ax = plt.subplots(figsize=(16, 4))
 
-    # Light outline histogram
-    sns.histplot(
-        sentence_count,
-        bins=30,
-        stat="density",
-        color="black",
-        fill=False,
-        edgecolor="#cccccc",
-        linewidth=1,
-        ax=ax
-    )
+    sns.histplot(sentence_count, bins=30, stat="density",
+                 color="black", fill=False, edgecolor="#cccccc", linewidth=1)
 
-    # KDE curve (hero)
-    sns.kdeplot(
-        sentence_count,
-        color="#2b6cb0",
-        linewidth=3,
-        ax=ax
-    )
+    sns.kdeplot(sentence_count, color="#2b6cb0", linewidth=3)
+    sns.rugplot(sentence_count, height=0.03, color="#2b6cb0", alpha=0.3)
 
-    # Subtle rug markers
-    sns.rugplot(
-        sentence_count,
-        height=0.03,
-        color="#2b6cb0",
-        alpha=0.3,
-        ax=ax
-    )
+    ax.text(0.5, -0.35, stats_text, transform=ax.transAxes,
+            ha="center", fontsize=14, weight="bold")
 
-    # Title
-    # ax.set_title(
-    #     "Distribution of Sentence Count",
-    #     fontsize=22,
-    #     weight="bold",
-    #     pad=25
-    # )
+    ax.set_xlabel("Sentence Count per Article", fontsize=16)
 
-    # Stats annotation below title
-    ax.text(
-        0.5,
-        -0.35,
-        stats_text,
-        transform=ax.transAxes,
-        ha="center",
-        fontsize=14,
-        weight="bold"
-    )
-
-    # Labels
-    ax.set_xlabel("Sentence Count", fontsize=16)
-    # ax.set_ylabel("Density", fontsize=16)
-
-    # Clean aesthetics
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
-    ax.grid(False)
     ax.get_yaxis().set_ticks([])
+    ax.grid(False)
+    ax.tick_params(axis="x", labelsize=14)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_path, "sentence_count_per_article.png"),
+                dpi=300, transparent=True)
+    plt.show()
+
+def plot_words_per_sentence(df, output_path, sentence_col="sentence_x", x_limit=60):
+    """
+    Distribution of number of words per SENTENCE.
+    Uses the sentence_x (or sentence_y) column.
+    """
+
+    # Compute words per sentence
+    wps = df[sentence_col].apply(lambda x: len(str(x).split()))
+
+    if x_limit:
+        wps = wps[wps <= x_limit]
+
+    # Stats
+    stats = {
+        "min": int(wps.min()),
+        "Q1": int(wps.quantile(0.25)),
+        "median": int(wps.median()),
+        "Q3": int(wps.quantile(0.75)),
+        "max": int(wps.max()),
+    }
+    stats_text = "  |  ".join([f"{k}={v}" for k, v in stats.items()])
+
+    # Plot
+    sns.set(style="white")
+    fig, ax = plt.subplots(figsize=(16, 4))
+
+    sns.histplot(wps, bins=40, stat="density",
+                 color="black", fill=False, edgecolor="#cccccc", linewidth=1)
+
+    sns.kdeplot(wps, color="#2b6cb0", linewidth=3)
+    sns.rugplot(wps, color="#2b6cb0", alpha=0.3, height=0.03)
+
+    ax.text(0.5, -0.35, stats_text, transform=ax.transAxes,
+            ha="center", fontsize=14, weight="bold")
+
+    ax.set_xlabel("Words per Sentence", fontsize=16)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.get_yaxis().set_ticks([])
+    ax.grid(False)
     ax.tick_params(axis="x", labelsize=14)
 
     plt.tight_layout()
     plt.savefig(
-        os.path.join(output_path, "sentence_count_distribution.png"),
+        os.path.join(output_path, "words_per_sentence.png"),
         dpi=300,
         transparent=True
     )
     plt.show()
 
+def drop_long_documents(df, sentence_col="sentence_x", threshold=1000):
+    """
+    Drops all rows for any doc_id whose total word count exceeds the threshold.
+    Word count is computed by summing sentence-level word counts.
+    """
 
+    # Compute word count per sentence
+    df["sentence_word_count"] = df[sentence_col].apply(lambda x: len(str(x).split()))
 
-# %%
-# main
+    # Aggregate to article-level word count
+    doc_word_count = (
+        df.groupby("doc_id")["sentence_word_count"]
+        .sum()
+    )
+
+    # Identify documents exceeding threshold
+    long_docs = doc_word_count[doc_word_count > threshold].index.tolist()
+
+    print(f"Removing {len(long_docs)} documents exceeding {threshold} words.")
+
+    # Drop rows with those doc_ids
+    df_cleaned = df[~df["doc_id"].isin(long_docs)].copy()
+
+    # Optional: remove helper column
+    df_cleaned.drop(columns=["sentence_word_count"], inplace=True, errors="ignore")
+
+    return df_cleaned
+
+# %% main
 if __name__ == "__main__":
-    ROOT = Path(__file__).resolve().parent.parent 
+    ROOT = get_project_root()
     data_path = ROOT / "data/news_corpus/"
     output_path = ROOT / "figures/descriptive/"
 
-    # read data
-    # %%
-    df = pd.read_csv(f"{data_path}/news_corpus.csv.gz", compression="gzip")
-
-    # %%
-    # Generate chart to show the source of articles
-    plot_articles_by_category_and_source(df, file_name=f"{output_path}/articles_by_category_and_source.png")
-    # %%
-    # Plot top publishers
-    plot_top_publishers_barplot(df, output_path, column="publisher", top_n=10)
-
-    # %%
-    # Show the average word count
-    plot_word_count(df, output_path, text_column="text", x_limit=1000)
-    # %%
-    # show the average sentence count
-    plot_sentence_count(df, output_path, text_column="text", x_limit=80)
     # %%
     # Preprocess the text data
     df["cleaned_text"] = df["translated_text"].apply(preprocess_text, additional_stopwords=["also"])
 
     df["topics"], topic_model = get_bert_topics(df["cleaned_text"])
 
-    # %%
     top_n = 10  # Change this to your desired number of topics
     # Group by date and topic to count the occurrences
     df = df[df["date"].notna()]
@@ -507,4 +543,30 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig(os.path.join(output_path, "top_topics_over_time.png"), dpi=300, transparent=True)
     plt.show()
-# %%
+
+    #%% Read sentences_svo
+    df = pd.read_csv(f"{data_path}/news_corpus_svo.csv.gz", compression="gzip")
+
+    # %%
+     df_cleaned = drop_long_documents(df, sentence_col="sentence_x", threshold=1000)
+    df_cleaned = drop_short_documents(df_cleaned,min_words=100)
+    # %%  Plot the top publisher sources 
+    plot_articles_by_category_and_source(df_cleaned, file_name=f"{output_path}/articles_by_category_and_source.png")
+    # Generate a table of top publishers
+    plot_top_publishers_barplot(df_cleaned, output_path, top_n=10)
+
+    #%% Show the average word count
+    print(df_cleaned.groupby('source')['doc_id'].nunique())
+    print(f"Total Articles = {df_cleaned.doc_id.nunique()}")
+    print(f"Total senteces in the corpus =  {df_cleaned.sentence_global_id.nunique()}")
+    print(f"Toal SVOs = {df_cleaned.svo_id.nunique()}")
+    plot_word_count(df_cleaned, output_path, x_limit=1000)
+    plot_sentence_count(df_cleaned, output_path, x_limit=80)
+    plot_words_per_sentence(df_cleaned, output_path=output_path)
+    
+    # %% drop redundant column
+    df_cleaned.drop(columns=['sentences_y'], inplace=True)
+    df_cleaned.rename(columns={'sentences_x':'sentences'})
+
+    # %% TODO match ARG0 & ARG1 with actor directory
+    
