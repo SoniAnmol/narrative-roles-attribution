@@ -16,6 +16,10 @@ import datetime
 import spacy
 import torch
 from pathlib import Path
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sentence_transformers import SentenceTransformer
+import hdbscan
 from transformers.models.auto import (
     AutoTokenizer,
     AutoModelForSequenceClassification
@@ -702,8 +706,193 @@ def drop_long_documents(df, sentence_col="sentence_x", threshold=1000):
 
     return df_cleaned
 
+def cluster_entities_semantically(
+    sentences_df, 
+    arg_cols=["ARG0", "ARG1"], 
+    k=None,
+    k_min=10, 
+    k_max=80,
+    step=5,
+    model_name="all-MiniLM-L6-v2"
+):
+    """
+    Automatically selects optimal number of clusters (k) using silhouette score  
+    unless k is manually supplied.
 
+    Returns:
+        - entity_cluster_map (entity → cluster_id)
+        - cluster_label_map (cluster_id → representative label)
+    """
 
+    # -------------------------------------------------------
+    # 1. Extract unique canonical entities
+    # -------------------------------------------------------
+    entities = (
+        sentences_df[arg_cols]
+        .melt(value_name="entity")["entity"]
+        .dropna()
+        .astype(str)
+    )
+
+    clean_entities = sorted(list(set([e.strip() for e in entities if e.strip()])))
+
+    if len(clean_entities) == 0:
+        print("No valid entities found for clustering.")
+        return {}, {}
+
+    print(f"Embedding {len(clean_entities)} entities...")
+
+    # -------------------------------------------------------
+    # 2. Compute embeddings
+    # -------------------------------------------------------
+    embedder = SentenceTransformer(model_name)
+    embeddings = embedder.encode(clean_entities, convert_to_numpy=True, show_progress_bar=True)
+
+    # -------------------------------------------------------
+    # 3. Automatically select k if not provided
+    # -------------------------------------------------------
+    if k is None:
+        print(f"\nSelecting optimal number of clusters between {k_min} and {k_max}...")
+
+        best_k = None
+        best_score = -1
+
+        for curr_k in range(k_min, min(k_max, len(clean_entities)) + 1, step):
+            kmeans = KMeans(n_clusters=curr_k, random_state=42, n_init="auto")
+            labels = kmeans.fit_predict(embeddings)
+
+            # Silhouette requires at least 2 clusters
+            if len(set(labels)) < 2:
+                continue
+
+            score = silhouette_score(embeddings, labels)
+
+            print(f"k={curr_k}: silhouette={score:.4f}")
+
+            if score > best_score:
+                best_k = curr_k
+                best_score = score
+
+        k = best_k or k_min  # fallback
+
+        print(f"\nOptimal k selected = {k}  (silhouette={best_score:.3f})")
+
+    else:
+        print(f"Using user-defined k = {k}")
+
+    # -------------------------------------------------------
+    # 4. Final clustering with optimal k
+    # -------------------------------------------------------
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init="auto")
+    cluster_ids = kmeans.fit_predict(embeddings)
+
+    entity_cluster_map = dict(zip(clean_entities, cluster_ids))
+
+    # -------------------------------------------------------
+    # 5. Compute entity frequencies in corpus
+    # -------------------------------------------------------
+    freq_df = (
+        sentences_df[arg_cols]
+        .melt(value_name="entity")
+        .dropna()
+        .astype(str)
+        .groupby("entity")
+        .size()
+        .reset_index(name="freq")
+    )
+
+    freq_df["cluster_id"] = freq_df["entity"].map(entity_cluster_map)
+
+    # -------------------------------------------------------
+    # 6. Cluster representative = most frequent term
+    # -------------------------------------------------------
+    cluster_label_map = (
+        freq_df.sort_values(["cluster_id", "freq"], ascending=[True, False])
+        .groupby("cluster_id")
+        .first()["entity"]
+        .to_dict()
+    )
+
+    # print("Clustering + labeling completed.")
+    return entity_cluster_map, cluster_label_map
+
+def export_clusters_to_excel(
+    df,
+    cluster_map,
+    entity_cols=["ARG0", "ARG1"],   # <— now supports BOTH
+    output_path="clusters.xlsx"
+):
+    """
+    Export clusters to Excel, combining entity frequencies from multiple columns
+    (e.g., ARG0 + ARG1). 
+    
+    Output:
+        - One column per cluster
+        - Entities inside each cluster sorted by frequency (ARG0 + ARG1)
+        - Format: 'entity (count)'
+    """
+
+    # -------------------------------------------------
+    # 1. Combine ARG0 + ARG1 into long format
+    # -------------------------------------------------
+    long_df = pd.concat(
+        [df[col].dropna().astype(str).to_frame("entity") for col in entity_cols],
+        axis=0,
+        ignore_index=True
+    )
+
+    # Normalize entity names (optional but helps matching)
+    long_df["entity_clean"] = long_df["entity"].str.lower().str.strip()
+
+    # -------------------------------------------------
+    # 2. Map clusters
+    # -------------------------------------------------
+    long_df["cluster_id"] = long_df["entity_clean"].map(cluster_map)
+
+    # Remove missing clusters
+    long_df = long_df.dropna(subset=["cluster_id"])
+
+    # -------------------------------------------------
+    # 3. Count frequencies
+    # -------------------------------------------------
+    freq = (
+        long_df.groupby(["cluster_id", "entity_clean"])
+               .size()
+               .reset_index(name="count")
+    )
+
+    # -------------------------------------------------
+    # 4. Build cluster → entity list column dict
+    # -------------------------------------------------
+    cluster_columns = {}
+
+    for cid in sorted(freq["cluster_id"].unique()):
+        sub = freq[freq["cluster_id"] == cid]
+
+        # Sort by descending frequency
+        sub = sub.sort_values("count", ascending=False)
+
+        formatted = [
+            f"{row['entity_clean']} ({row['count']})"
+            for _, row in sub.iterrows()
+        ]
+
+        cluster_columns[f"cluster_{int(cid)}"] = formatted
+
+    # -------------------------------------------------
+    # 5. Turn into a DataFrame with uneven column lengths
+    # -------------------------------------------------
+    cluster_df = pd.DataFrame(dict([
+        (col, pd.Series(vals)) for col, vals in cluster_columns.items()
+    ])).fillna("")
+
+    # -------------------------------------------------
+    # 6. Save to Excel
+    # -------------------------------------------------
+    cluster_df.to_excel(output_path, index=False)
+    print(f"Cluster export created at:\n{output_path}")
+
+    return cluster_df
 
 
 # %%-------------------------------------------------------------------------- #
@@ -714,6 +903,7 @@ if __name__ == "__main__":
     # * Read data
     file_path = ROOT / "data/news_corpus/"
     file_name = "/news_corpus.csv.gz"
+    output_path = ROOT / "figures/descriptive/"
     df = pd.read_csv(f'{file_path}{file_name}')
 
     # %%
@@ -741,14 +931,11 @@ if __name__ == "__main__":
     df.drop(columns=['id', 'translated_text'], inplace=True)
     sentences = pd.merge(left=sentences, right=df, on='doc_id')
 
-    #%% TODO Perform sentiment analysis
-    
+    #%% Perform sentiment analysis
     # Load local model
     tokenizer, model = load_local_roberta()
-
     # Compute sentiment on unique sentences
     sentiment_df = compute_sentiment(sentences, tokenizer, model)
-
     sentences = sentences.merge(sentiment_df, on="sentence_global_id", how="left")
 
 
@@ -757,39 +944,66 @@ if __name__ == "__main__":
     #     f"{file_path}/news_corpus_svo.csv.gz", compression="gzip", index=False
     # )
 
-    #%% Read sentences_svo
-    data_path = ROOT / "data/news_corpus/"
-    output_path = ROOT / "figures/descriptive/"
-    df = pd.read_csv(f"{data_path}/news_corpus_svo.csv.gz", compression="gzip")
+    # %% Read sentences_svo
+    # sentences = pd.read_csv(f"{file_path}/news_corpus_svo.csv.gz", compression="gzip")
 
-    # %%
-     df_cleaned = drop_long_documents(df, sentence_col="sentence_x", threshold=1000)
-    df_cleaned = drop_short_documents(df_cleaned,min_words=100)
+    # %% Drop too long and too short articles
+     sentences = drop_long_documents(sentences, sentence_col="sentence_x", threshold=1000)
+    sentences = drop_short_documents(sentences,min_words=100)
     # %%  Plot the top publisher sources 
-    plot_articles_by_category_and_source(df_cleaned, file_name=f"{output_path}/articles_by_category_and_source.png")
+    plot_articles_by_category_and_source(sentences, file_name=f"{output_path}/articles_by_category_and_source.png")
     # Generate a table of top publishers
-    plot_top_publishers_barplot(df_cleaned, output_path, top_n=10)
+    plot_top_publishers_barplot(sentences, output_path, top_n=10)
 
     #%% Show the average word count
-    print(df_cleaned.groupby('source')['doc_id'].nunique())
-    print(f"Total Articles = {df_cleaned.doc_id.nunique()}")
-    print(f"Total senteces in the corpus =  {df_cleaned.sentence_global_id.nunique()}")
-    print(f"Toal SVOs = {df_cleaned.svo_id.nunique()}")
-    plot_word_count(df_cleaned, output_path, x_limit=1000)
-    plot_sentence_count(df_cleaned, output_path, x_limit=80)
-    plot_words_per_sentence(df_cleaned, output_path=output_path)
+    print(sentences.groupby('source')['doc_id'].nunique())
+    print(f"Total Articles = {sentences.doc_id.nunique()}")
+    print(f"Total senteces in the corpus =  {sentences.sentence_global_id.nunique()}")
+    print(f"Toal SVOs = {sentences.svo_id.nunique()}")
+    plot_word_count(sentences, output_path, x_limit=1000)
+    plot_sentence_count(sentences, output_path, x_limit=80)
+    plot_words_per_sentence(sentences, output_path=output_path)
     
     # %% drop redundant column
-    df_cleaned.drop(columns=['sentence_y'], inplace=True)
-    df_cleaned.rename(columns={'sentence_x':'sentences'})
+    sentences.drop(columns=['sentence_y'], inplace=True)
+    sentences.rename(columns={'sentence_x':'sentences'}, inplace=True)
+
+    # %% TODO improve the actor clustering
 
     # %%  Read actor directory
     actor_directory_path = ROOT / "data/actor_directory"
     actor_directory = pd.read_csv(f"{actor_directory_path}/actor_directory.csv")
-    actor_directory = actor_directory[actor_directory.keep==0]
-    actor_dict = dict(zip(actor_directory['entity'], actor_directory['actor']))
+    
+    entitiy_dict = dict(zip(actor_directory['entity'], actor_directory['category']))
+    actor_directory = actor_directory[actor_directory.keep == 0].copy()
+    actor_dict = dict(zip(actor_directory['category'], actor_directory['actor']))
 
-    # %% TODO improve the actor clustering
+    # %% Apply actor and entity directory
+    for col in ['ARG0', 'ARG1']:
+        sentences.loc[:, col] = sentences[col].replace(entitiy_dict)
+        sentences.loc[:, col] = sentences[col].replace(actor_dict)
+
+
+    # %% semantic clustering
+    all_entities = pd.concat([
+        sentences["ARG0"],
+        sentences["ARG1"]
+    ]).dropna().unique()
+
+    # embed and cluster once
+    entity_cluster_map, cluster_label_map  = cluster_entities_semantically(sentences, arg_cols=["ARG0", "ARG1"], k=30)
+
+    cluster_df = export_clusters_to_excel(
+    df=sentences,
+    cluster_map=entity_cluster_map,
+    output_path= ROOT / "data/actor_directory/actor_clusters.xlsx")
+
+
+    #%% map both columns
+    sentences["ARG0"] = sentences["ARG0"].map(entity_cluster_map)
+    sentences["ARG1"] = sentences["ARG1"].map(entity_cluster_map)
+
+
 
     #%%  TODO Map ARG0 & ARG1 with actor_directory
     # for col in ['ARG0', 'ARG1']:
