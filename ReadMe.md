@@ -16,15 +16,12 @@ pynpf
 ├─ ReadMe.md
 ├─ requirements.txt
 └─ scripts
-   ├─ 1_lexis_nexis_to_dataframe.py
-   ├─ 2_gnews_article_scraper.py
-   ├─ 3_news_data_preparation.py
-   ├─ 4_data_descriptives.py
-   ├─ 5_named_entity_recognition.py
-   ├─ 6_extract_svos.py
-   ├─ 7_sample_for_annotation.py
-   ├─ 8_training_model.py
-   ├─ appendix
+   ├─ lexis_nexis_to_dataframe.py
+   ├─ gnews_article_scraper.py
+   ├─ news_data_preparation.py
+   ├─ extract_svos.py
+   ├─ sample_for_annotation.py
+   ├─ training_model.py
    └─ visualisations
 
 ```
@@ -39,7 +36,7 @@ The scripts must be executed in the following order:
 1. **gnews_articles_scraper.py** Download the articles from Google News
 1. **lexis_nexis_to_dataframe.py** Create dataframe from articles downloaded from Lexis-Nexis 
 1. **news_data_preparation.py** Clean and prepare the text corpus
-1. **named_entitiy_recognition.py** Extract named enities from the corpus
+<!-- 1. **named_entitiy_recognition.py** Extract named enities from the corpus -->
 1. **extract_svos.py** Split the corpus into sentences and extract Subject-Verb-Objects
 1. **sample_data_for_annotation.py** Sample sentences for annotation
 1. **training_model.py** Train model to classify Narrative Character Roles
