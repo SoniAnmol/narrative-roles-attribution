@@ -13,23 +13,20 @@ from nltk.corpus import stopwords
 from relatio import Preprocessor
 from relatio import extract_roles
 import datetime
+import plotly.express as px
+import umap
 import spacy
 import torch
 from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 import hdbscan
-from transformers.models.auto import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification
-)
+from collections import Counter
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-
-
-# %%-------------------------------------------------------------------------- #
-#                                    Methods                                   #
-# ---------------------------------------------------------------------------- #
+# %% Methods                                   
 def clean_roles(df, preprocessor, output_path=None):
     """
     Clean ARG roles and verbs after extraction.
@@ -706,170 +703,208 @@ def drop_long_documents(df, sentence_col="sentence_x", threshold=1000):
 
     return df_cleaned
 
-def cluster_entities_semantically(
-    sentences_df, 
-    arg_cols=["ARG0", "ARG1"], 
-    k=None,
-    k_min=10, 
-    k_max=80,
+def prepare_known_embeddings(actor_dict, entity_dict, model_name="all-mpnet-base-v2"):
+    """
+    Embed all known entities (actors + categories) and store lookup tables.
+    """
+    model = SentenceTransformer(model_name)
+
+    # unique canonical labels
+    actor_keys = list(set(actor_dict.values()))
+    entity_keys = list(set(entity_dict.values()))
+
+    all_labels = actor_keys + entity_keys
+
+    embeddings = model.encode(all_labels, convert_to_numpy=True)
+
+    label_to_emb = dict(zip(all_labels, embeddings))
+
+    return actor_keys, entity_keys, label_to_emb, model
+
+def cluster_unknown_entities(
+    unknown_entities,
+    method="hdbscan",
+    model_name="all-mpnet-base-v2",
+    k_min=10,
+    k_max=50,
     step=5,
-    model_name="all-MiniLM-L6-v2"
+    k=None
 ):
     """
-    Automatically selects optimal number of clusters (k) using silhouette score  
-    unless k is manually supplied.
+    Cluster unknown entities using either HDBSCAN or KMeans.
 
     Returns:
-        - entity_cluster_map (entity → cluster_id)
-        - cluster_label_map (cluster_id → representative label)
+        unknown_mapping: entity → cluster_label
+        cluster_label_map: cluster_id → representative entity
     """
 
-    # -------------------------------------------------------
-    # 1. Extract unique canonical entities
-    # -------------------------------------------------------
-    entities = (
-        sentences_df[arg_cols]
-        .melt(value_name="entity")["entity"]
-        .dropna()
-        .astype(str)
-    )
+    # -----------------------------------------
+    # 1. Clean entities
+    # -----------------------------------------
+    clean_entities = sorted({
+        e.strip().lower()
+        for e in unknown_entities
+        if isinstance(e, str) and e.strip()
+    })
 
-    clean_entities = sorted(list(set([e.strip() for e in entities if e.strip()])))
-
-    if len(clean_entities) == 0:
-        print("No valid entities found for clustering.")
+    if not clean_entities:
+        print("No unknown entities to cluster.")
         return {}, {}
 
-    print(f"Embedding {len(clean_entities)} entities...")
+    print(f"Clustering {len(clean_entities)} unknown entities using {method} ...")
 
-    # -------------------------------------------------------
-    # 2. Compute embeddings
-    # -------------------------------------------------------
+    # -----------------------------------------
+    # 2. Embeddings
+    # -----------------------------------------
     embedder = SentenceTransformer(model_name)
     embeddings = embedder.encode(clean_entities, convert_to_numpy=True, show_progress_bar=True)
 
-    # -------------------------------------------------------
-    # 3. Automatically select k if not provided
-    # -------------------------------------------------------
-    if k is None:
-        print(f"\nSelecting optimal number of clusters between {k_min} and {k_max}...")
+    # -----------------------------------------
+    # 3. HDBSCAN clustering
+    # -----------------------------------------
+    if method.lower() == "hdbscan":
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=3,
+            min_samples=2,
+            metric="euclidean"
+        )
+        labels = clusterer.fit_predict(embeddings)
 
-        best_k = None
-        best_score = -1
+        # HDBSCAN returns -1 for NOISE
+        # we treat noise as its own separate cluster
+        labels = list(labels)
 
-        for curr_k in range(k_min, min(k_max, len(clean_entities)) + 1, step):
-            kmeans = KMeans(n_clusters=curr_k, random_state=42, n_init="auto")
-            labels = kmeans.fit_predict(embeddings)
+        # For noise, assign unique cluster_ids
+        next_cluster_id = max([l for l in labels if l != -1], default=0) + 1
 
-            # Silhouette requires at least 2 clusters
-            if len(set(labels)) < 2:
-                continue
+        final_labels = []
+        for lbl in labels:
+            if lbl == -1:
+                final_labels.append(next_cluster_id)
+                next_cluster_id += 1
+            else:
+                final_labels.append(lbl)
 
-            score = silhouette_score(embeddings, labels)
+        cluster_ids = final_labels
 
-            print(f"k={curr_k}: silhouette={score:.4f}")
-
-            if score > best_score:
-                best_k = curr_k
-                best_score = score
-
-        k = best_k or k_min  # fallback
-
-        print(f"\nOptimal k selected = {k}  (silhouette={best_score:.3f})")
-
+    # -----------------------------------------
+    # 4. KMeans clustering
+    # -----------------------------------------
     else:
-        print(f"Using user-defined k = {k}")
+        if k is None:
+            print("Selecting optimal k using silhouette score...")
 
-    # -------------------------------------------------------
-    # 4. Final clustering with optimal k
-    # -------------------------------------------------------
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init="auto")
-    cluster_ids = kmeans.fit_predict(embeddings)
+            best_k, best_score = None, -1
 
-    entity_cluster_map = dict(zip(clean_entities, cluster_ids))
+            for curr_k in range(k_min, min(k_max, len(clean_entities)) + 1, step):
+                km = KMeans(n_clusters=curr_k, random_state=42)
+                lbls = km.fit_predict(embeddings)
 
-    # -------------------------------------------------------
-    # 5. Compute entity frequencies in corpus
-    # -------------------------------------------------------
-    freq_df = (
-        sentences_df[arg_cols]
-        .melt(value_name="entity")
-        .dropna()
-        .astype(str)
-        .groupby("entity")
-        .size()
-        .reset_index(name="freq")
-    )
+                if len(set(lbls)) < 2:
+                    continue
 
-    freq_df["cluster_id"] = freq_df["entity"].map(entity_cluster_map)
+                score = silhouette_score(embeddings, lbls)
+                print(f"k={curr_k}, silhouette={score:.4f}")
 
-    # -------------------------------------------------------
-    # 6. Cluster representative = most frequent term
-    # -------------------------------------------------------
-    cluster_label_map = (
-        freq_df.sort_values(["cluster_id", "freq"], ascending=[True, False])
-        .groupby("cluster_id")
-        .first()["entity"]
-        .to_dict()
-    )
+                if score > best_score:
+                    best_k = curr_k
+                    best_score = score
 
-    # print("Clustering + labeling completed.")
-    return entity_cluster_map, cluster_label_map
+            k = best_k or k_min
+            print(f"Optimal k = {k}")
 
-def export_clusters_to_excel(
+        km = KMeans(n_clusters=k, random_state=42)
+        cluster_ids = km.fit_predict(embeddings)
+
+    # -----------------------------------------
+    # 5. Create mapping
+    # -----------------------------------------
+    unknown_cluster_map = dict(zip(clean_entities, cluster_ids))
+
+    # -----------------------------------------
+    # 6. Representative term = most frequent in input
+    # -----------------------------------------
+    cluster_label_map = {}
+    cluster_values = set(cluster_ids)
+
+    for cid in cluster_values:
+        members = [e for e, c in unknown_cluster_map.items() if c == cid]
+
+        # pick the most frequent occurrence in unknown_entities
+        rep = max(members, key=lambda e: unknown_entities.count(e))
+        cluster_label_map[cid] = rep
+
+    return unknown_cluster_map, cluster_label_map
+
+def export_mapping_to_excel(
     df,
-    cluster_map,
-    entity_cols=["ARG0", "ARG1"],   # <— now supports BOTH
-    output_path="clusters.xlsx"
+    mapping_dict,
+    entity_cols=["ARG0", "ARG1"],
+    output_path="final_mapping.xlsx"
 ):
     """
-    Export clusters to Excel, combining entity frequencies from multiple columns
-    (e.g., ARG0 + ARG1). 
+    Export a canonical mapping dict (entity -> label) into Excel 
+    in the SAME STRUCTURE as cluster export:
+
+        - One column per mapped label (actor/category/etc.)
+        - Rows: entities mapped to that label
+        - Format: 'entity (count)' sorted by frequency (ARG0 + ARG1)
     
-    Output:
-        - One column per cluster
-        - Entities inside each cluster sorted by frequency (ARG0 + ARG1)
-        - Format: 'entity (count)'
+    Parameters
+    ----------
+    df : DataFrame
+        Your SVO dataframe with ARG0, ARG1, etc.
+    mapping_dict : dict
+        Final mapping: canonical_entity -> mapped_label
+    entity_cols : list
+        Columns to collect entities from (e.g., ARG0 + ARG1)
+    output_path : str
+        Excel file path
     """
 
-    # -------------------------------------------------
-    # 1. Combine ARG0 + ARG1 into long format
-    # -------------------------------------------------
+    df = df.copy()
+
+    # -----------------------------------------------
+    # 1. Long format for both ARG0 & ARG1
+    # -----------------------------------------------
     long_df = pd.concat(
         [df[col].dropna().astype(str).to_frame("entity") for col in entity_cols],
         axis=0,
         ignore_index=True
     )
 
-    # Normalize entity names (optional but helps matching)
-    long_df["entity_clean"] = long_df["entity"].str.lower().str.strip()
+    long_df["entity_clean"] = long_df["entity"].str.strip().str.lower()
 
-    # -------------------------------------------------
-    # 2. Map clusters
-    # -------------------------------------------------
-    long_df["cluster_id"] = long_df["entity_clean"].map(cluster_map)
+    # -----------------------------------------------
+    # 2. Apply final mapping
+    # -----------------------------------------------
+    # Normalize mapping keys
+    normalized_mapping = {
+        str(k).strip().lower(): v for k, v in mapping_dict.items()
+    }
 
-    # Remove missing clusters
-    long_df = long_df.dropna(subset=["cluster_id"])
+    long_df["mapped_label"] = long_df["entity_clean"].map(normalized_mapping)
 
-    # -------------------------------------------------
-    # 3. Count frequencies
-    # -------------------------------------------------
+    # Drop rows where entity has no mapping
+    mapped_df = long_df.dropna(subset=["mapped_label"])
+
+    # -----------------------------------------------
+    # 3. Frequency counts
+    # -----------------------------------------------
     freq = (
-        long_df.groupby(["cluster_id", "entity_clean"])
-               .size()
-               .reset_index(name="count")
+        mapped_df.groupby(["mapped_label", "entity_clean"])
+                 .size()
+                 .reset_index(name="count")
     )
 
-    # -------------------------------------------------
-    # 4. Build cluster → entity list column dict
-    # -------------------------------------------------
-    cluster_columns = {}
+    # -----------------------------------------------
+    # 4. Build columns: label → list of "entity (count)"
+    # -----------------------------------------------
+    label_columns = {}
 
-    for cid in sorted(freq["cluster_id"].unique()):
-        sub = freq[freq["cluster_id"] == cid]
+    for label in sorted(freq["mapped_label"].unique()):
+        sub = freq[freq["mapped_label"] == label]
 
-        # Sort by descending frequency
         sub = sub.sort_values("count", ascending=False)
 
         formatted = [
@@ -877,23 +912,178 @@ def export_clusters_to_excel(
             for _, row in sub.iterrows()
         ]
 
-        cluster_columns[f"cluster_{int(cid)}"] = formatted
+        label_columns[str(label)] = formatted
 
-    # -------------------------------------------------
-    # 5. Turn into a DataFrame with uneven column lengths
-    # -------------------------------------------------
-    cluster_df = pd.DataFrame(dict([
-        (col, pd.Series(vals)) for col, vals in cluster_columns.items()
+    # -----------------------------------------------
+    # 5. Turn into DataFrame (uneven column lengths OK)
+    # -----------------------------------------------
+    mapping_df = pd.DataFrame(dict([
+        (col, pd.Series(vals)) for col, vals in label_columns.items()
     ])).fillna("")
 
-    # -------------------------------------------------
-    # 6. Save to Excel
-    # -------------------------------------------------
-    cluster_df.to_excel(output_path, index=False)
-    print(f"Cluster export created at:\n{output_path}")
+    # -----------------------------------------------
+    # 6. Save Excel
+    # -----------------------------------------------
+    mapping_df.to_excel(output_path, index=False)
+    print(f"Final mapping exported to:\n{output_path}")
 
-    return cluster_df
+    return mapping_df
 
+def build_final_mapping(entity_dict, actor_dict, unknown_mapping):
+    """
+    Merge all mapping dictionaries into ONE final mapping dict.
+    Priority order:
+    1. actor_dict     (highest priority)
+    2. entity_dict
+    3. unknown_mapping (semantic clusters)
+    """
+    final_mapping = {}
+
+    # Normalize keys
+    def normalize(d):
+        return {str(k).strip().lower(): str(v).strip() for k, v in d.items()}
+
+    actor_dict = normalize(actor_dict)
+    entity_dict = normalize(entity_dict)
+    unknown_mapping = normalize(unknown_mapping)
+
+    # Merge priority-wise
+    final_mapping.update(unknown_mapping)   # lowest priority
+    final_mapping.update(entity_dict)       # overwrites unknowns
+    final_mapping.update(actor_dict)        # overwrites everything
+
+    return final_mapping
+
+def find_unknown_entities(df, cols, mapping_dicts):
+    """
+    Identify entities in specified columns that are NOT in any of the mapping dictionaries.
+
+    Ensures safe handling of NaN, numeric, and mixed types.
+    """
+
+    # Combine all known values from all dictionaries
+    known = set()
+    for d in mapping_dicts:
+        known |= {str(v).strip().lower() for v in d.keys() if isinstance(v, str)}
+
+    unknown = set()
+
+    for col in cols:
+        for val in df[col].dropna():
+            if not isinstance(val, str):
+                val = str(val)
+
+            val_norm = val.strip().lower()
+            
+            if val_norm and val_norm not in known:
+                unknown.add(val_norm)
+
+    return sorted(list(unknown))
+
+def apply_final_mapping(df, final_mapping, cols=["ARG0", "ARG1"]):
+    df = df.copy()
+
+    for col in cols:
+        df[col] = (
+            df[f"{col}_raw"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .map(final_mapping)
+            .fillna(df[col])          
+        )
+
+    return df
+
+def visualize_actor_clusters_interactive(
+    final_mapping,
+    actor_dict,
+    embedder,
+    output_path="actor_clusters_interactive.html",
+    max_points=2000
+):
+    """
+    Show only clusters whose mapped label is in actor_dict.values().
+    Interactive UMAP scatter using Plotly.
+    """
+
+    # ------------------------------------------
+    # 1. Extract entities + cluster labels
+    # ------------------------------------------
+    entities = np.array(list(final_mapping.keys()))
+    labels   = np.array(list(final_mapping.values()))
+
+    actor_labels = set(actor_dict.values())
+
+    # Keep only entities mapped to an actor label
+    keep_mask = np.array([label in actor_labels for label in labels])
+
+    entities = entities[keep_mask]
+    labels   = labels[keep_mask]
+
+    print(f"Showing {len(entities)} entities from actor clusters.")
+
+    if len(entities) == 0:
+        print("No actor-related clusters found.")
+        return None
+
+    # ------------------------------------------
+    # 2. Subsample to keep plot fast
+    # ------------------------------------------
+    if len(entities) > max_points:
+        idx = np.random.choice(len(entities), max_points, replace=False)
+        entities = entities[idx]
+        labels   = labels[idx]
+
+    # ------------------------------------------
+    # 3. Compute embeddings
+    # ------------------------------------------
+    embeddings = embedder.encode(
+        entities.tolist(),
+        convert_to_numpy=True,
+        show_progress_bar=True
+    )
+
+    # ------------------------------------------
+    # 4. UMAP dimensionality reduction
+    # ------------------------------------------
+    reducer = umap.UMAP(
+        n_neighbors=15,
+        min_dist=0.1,
+        metric="cosine",
+        random_state=42
+    )
+    xy = reducer.fit_transform(embeddings)
+
+    # ------------------------------------------
+    # 5. Build DataFrame for Plotly
+    # ------------------------------------------
+    df_plot = pd.DataFrame({
+        "x": xy[:, 0],
+        "y": xy[:, 1],
+        "entity": entities,
+        "label": labels
+    })
+
+    # ------------------------------------------
+    # 6. Interactive Plotly Scatter
+    # ------------------------------------------
+    fig = px.scatter(
+        df_plot,
+        x="x",
+        y="y",
+        color="label",
+        hover_name="entity",
+        hover_data={"label": True, "x": False, "y": False},
+        title="Interactive Actor Cluster Map (UMAP)"
+    )
+
+    fig.update_traces(marker=dict(size=8, opacity=0.8))
+
+    fig.write_html(output_path)
+    print(f"Interactive actor cluster map saved to: {output_path}")
+
+    return fig
 
 # %%-------------------------------------------------------------------------- #
 #                                     Main                                     #
@@ -939,23 +1129,18 @@ if __name__ == "__main__":
     sentences = sentences.merge(sentiment_df, on="sentence_global_id", how="left")
 
 
-    # %% export svos
-    # sentences.to_csv(
-    #     f"{file_path}/news_corpus_svo.csv.gz", compression="gzip", index=False
-    # )
-
     # %% Read sentences_svo
     # sentences = pd.read_csv(f"{file_path}/news_corpus_svo.csv.gz", compression="gzip")
 
     # %% Drop too long and too short articles
-     sentences = drop_long_documents(sentences, sentence_col="sentence_x", threshold=1000)
+    sentences = drop_long_documents(sentences, sentence_col="sentence_x", threshold=1000)
     sentences = drop_short_documents(sentences,min_words=100)
     # %%  Plot the top publisher sources 
     plot_articles_by_category_and_source(sentences, file_name=f"{output_path}/articles_by_category_and_source.png")
     # Generate a table of top publishers
     plot_top_publishers_barplot(sentences, output_path, top_n=10)
 
-    #%% Show the average word count
+    # Show the average word count
     print(sentences.groupby('source')['doc_id'].nunique())
     print(f"Total Articles = {sentences.doc_id.nunique()}")
     print(f"Total senteces in the corpus =  {sentences.sentence_global_id.nunique()}")
@@ -968,44 +1153,71 @@ if __name__ == "__main__":
     sentences.drop(columns=['sentence_y'], inplace=True)
     sentences.rename(columns={'sentence_x':'sentences'}, inplace=True)
 
-    # %% TODO improve the actor clustering
+    # %% improve the actor clustering
 
-    # %%  Read actor directory
+    # Read actor directory
     actor_directory_path = ROOT / "data/actor_directory"
     actor_directory = pd.read_csv(f"{actor_directory_path}/actor_directory.csv")
     
-    entitiy_dict = dict(zip(actor_directory['entity'], actor_directory['category']))
+    entity_dict = dict(zip(actor_directory['entity'], actor_directory['category']))
     actor_directory = actor_directory[actor_directory.keep == 0].copy()
     actor_dict = dict(zip(actor_directory['category'], actor_directory['actor']))
 
-    # %% Apply actor and entity directory
+    # remove NaN entries if any
+    sentences.dropna(subset=['ARG0', 'ARG1'], inplace=True)
+
+    # Apply actor and entity directory
     for col in ['ARG0', 'ARG1']:
-        sentences.loc[:, col] = sentences[col].replace(entitiy_dict)
-        sentences.loc[:, col] = sentences[col].replace(actor_dict)
+        # preserve raw values
+        sentences.loc[:, f'{col}_raw'] = sentences[col]
+        sentences.loc[:, col] = sentences[col].map(entity_dict)
+        sentences.loc[:, col] = sentences[col].map(actor_dict)
 
 
-    # %% semantic clustering
-    all_entities = pd.concat([
-        sentences["ARG0"],
-        sentences["ARG1"]
-    ]).dropna().unique()
+    # Prepare embeddungs for known labels
+    actor_keys, entity_keys, label_to_emb, model = prepare_known_embeddings(
+    actor_dict,
+    entity_dict,
+    model_name="all-mpnet-base-v2")
 
-    # embed and cluster once
-    entity_cluster_map, cluster_label_map  = cluster_entities_semantically(sentences, arg_cols=["ARG0", "ARG1"], k=30)
+    # Identify items in ARG0 and ARG1 that are not mapped py entitry and actor dict
+    unknown_entities = find_unknown_entities(
+    sentences,
+    cols=["ARG0_raw", "ARG1_raw"],
+    mapping_dicts=[entity_dict, actor_dict])
 
-    cluster_df = export_clusters_to_excel(
-    df=sentences,
-    cluster_map=entity_cluster_map,
-    output_path= ROOT / "data/actor_directory/actor_clusters.xlsx")
-
-
-    #%% map both columns
-    sentences["ARG0"] = sentences["ARG0"].map(entity_cluster_map)
-    sentences["ARG1"] = sentences["ARG1"].map(entity_cluster_map)
-
-
-
-    #%%  TODO Map ARG0 & ARG1 with actor_directory
-    # for col in ['ARG0', 'ARG1']:
-    #     df_cleaned.loc[:, col] = df_cleaned[col].replace(actor_dict)
+    # Map unknown entities semantically
+    unknown_mapping, unknown_cluster_labels = cluster_unknown_entities(
+        unknown_entities,
+        method="hdbscan")
     
+    # Build final mapping dictionary (no circularity)
+    final_mapping = build_final_mapping(
+        entity_dict=entity_dict,
+        actor_dict=actor_dict,
+        unknown_mapping=unknown_mapping)
+
+    # Export canonical clusters for manual review
+    mapping_df = export_mapping_to_excel(
+    sentences,
+    final_mapping,
+    entity_cols=["ARG0_raw", "ARG1_raw"],
+    output_path= str(ROOT / "data/actor_directory/actor_clusters_embeddings.xlsx"))
+
+    # Apply final mapping to ARG0 & ARG1 once
+    sentences = apply_final_mapping(sentences, final_mapping)
+
+
+#%%
+    embedder = SentenceTransformer("all-mpnet-base-v2")  
+
+    fig = visualize_actor_clusters_interactive(
+    final_mapping=final_mapping,
+    actor_dict=actor_dict,
+    embedder=embedder,
+    output_path=str(ROOT / "figures/descriptive/actor_clusters_interactive.html")
+)
+# %% export svos
+    sentences.to_csv(
+        f"{file_path}/news_corpus_svo.csv.gz", compression="gzip", index=False
+    )
