@@ -2,10 +2,9 @@
 
 # %%
 import pandas as pd
+import numpy as np
 
-# %%
-# * methods
-
+# %% methods
 
 def sample_top_sentence_indices(
     df, arg0_col="ARG0", arg1_col="ARG1", sentence_index_col="sentence_index", top_n=10, actor_categories=None
@@ -40,14 +39,38 @@ def sample_top_sentence_indices(
 
     return sampled_df
 
+def get_actor_count(df, actor=None, col1='ARG0', col2='ARG1'):
+    if actor is None:
+        actors = pd.read_csv('../data/actor_directory/actor_directory.csv')
+        # Get the list of unique actors
+        actor = list(actors.actor.unique())
+        actor.remove(np.nan)
 
-# %%
-# * main
+    # Get the distribution of actors in the text corpus
+    entities = pd.concat([df[col1], df[col2]])
+    entities = entities[entities.isin(actor)]
+    actor_count = entities.value_counts()
+    return actor_count
+
+# %% main
 if __name__ == "__main__":
     # * Read files
-    df = pd.read_csv("../output/news_narratives_2024-11-05_20-50-54.csv.gz")
-    actors = pd.read_csv("../data/actor_entity_directory_v2.csv")
+    df = pd.read_csv("../data/news_corpus/news_corpus_svo.csv.gz")
+    actors = pd.read_csv('../data/actor_directory/actor_directory.csv')
     sampled_data = pd.read_excel("../output/annotated_data.xlsx")
+
+    #%% Get the distribution of actors in the text corpus
+    actor_count_corpus = get_actor_count(df, col1='ARG0', col2 = 'ARG1')
+    actor_count_sample = get_actor_count(sampled_data, col1='ARG0', col2 = 'ARG1')
+    
+    #%% sampled actor vs actors in corpus
+    actor_count = pd.merge(actor_count_sample, actor_count_corpus, left_index=True, right_index=True, how='outer', suffixes=('_sample', '_corpus'))
+    actor_count['percentage_sampled'] = actor_count['count_sample']/actor_count['count_corpus']
+
+    print(actor_count)
+
+    #%% TODO sample additional SVOs to match with minimum threshold for actor representation
+
     # %%
     # * Filter actors of interest
     actors = actors[actors.keep == 1]
