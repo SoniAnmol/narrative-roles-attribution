@@ -20,7 +20,9 @@ import torch
 from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from sklearn.metrics import pairwise_distances
 from sentence_transformers import SentenceTransformer
+from sklearn.preprocessing import normalize
 from sklearn.metrics.pairwise import cosine_similarity
 import hdbscan
 from collections import Counter
@@ -728,14 +730,12 @@ def cluster_unknown_entities(
     k_min=10,
     k_max=50,
     step=5,
-    k=None
-):
+    k=None):
     """
-    Cluster unknown entities using either HDBSCAN or KMeans.
-
+    Cluster unknown entities using HDBSCAN or KMeans.
     Returns:
-        unknown_mapping: entity → cluster_label
-        cluster_label_map: cluster_id → representative entity
+        semantic_unknown_map: entity → semantic cluster label
+        cluster_label_map: cluster_id → representative cluster label
     """
 
     # -----------------------------------------
@@ -758,6 +758,18 @@ def cluster_unknown_entities(
     # -----------------------------------------
     embedder = SentenceTransformer(model_name)
     embeddings = embedder.encode(clean_entities, convert_to_numpy=True, show_progress_bar=True)
+    embeddings = normalize(embeddings)
+    # Create a dictionary for quick lookup
+    emb_dict = {entity: emb for entity, emb in zip(clean_entities, embeddings)}
+
+    # -----------------------------------------
+    # Helper: find representative term (medoid)
+    # -----------------------------------------
+    def cluster_medoid(members):
+        mat = np.vstack([emb_dict[m] for m in members])
+        dist = pairwise_distances(mat, metric="euclidean")
+        medoid_index = np.argmin(dist.sum(axis=0))
+        return members[medoid_index]
 
     # -----------------------------------------
     # 3. HDBSCAN clustering
@@ -766,15 +778,14 @@ def cluster_unknown_entities(
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=3,
             min_samples=2,
-            metric="euclidean"
+            metric="euclidean",
+            prediction_data=True,
+            cluster_selection_epsilon=0.05,
+            cluster_selection_method="eom",
         )
-        labels = clusterer.fit_predict(embeddings)
+        labels = list(clusterer.fit_predict(embeddings))
 
-        # HDBSCAN returns -1 for NOISE
-        # we treat noise as its own separate cluster
-        labels = list(labels)
-
-        # For noise, assign unique cluster_ids
+        # Assign new IDs to noise
         next_cluster_id = max([l for l in labels if l != -1], default=0) + 1
 
         final_labels = []
@@ -807,8 +818,7 @@ def cluster_unknown_entities(
                 print(f"k={curr_k}, silhouette={score:.4f}")
 
                 if score > best_score:
-                    best_k = curr_k
-                    best_score = score
+                    best_k, best_score = curr_k, score
 
             k = best_k or k_min
             print(f"Optimal k = {k}")
@@ -817,24 +827,28 @@ def cluster_unknown_entities(
         cluster_ids = km.fit_predict(embeddings)
 
     # -----------------------------------------
-    # 5. Create mapping
+    # 5. Map entity → cluster_id
     # -----------------------------------------
     unknown_cluster_map = dict(zip(clean_entities, cluster_ids))
 
     # -----------------------------------------
-    # 6. Representative term = most frequent in input
+    # 6. Compute semantic cluster labels (medoids)
     # -----------------------------------------
     cluster_label_map = {}
-    cluster_values = set(cluster_ids)
-
-    for cid in cluster_values:
+    for cid in set(cluster_ids):
         members = [e for e, c in unknown_cluster_map.items() if c == cid]
+        representative = cluster_medoid(members)
+        cluster_label_map[cid] = representative
 
-        # pick the most frequent occurrence in unknown_entities
-        rep = max(members, key=lambda e: unknown_entities.count(e))
-        cluster_label_map[cid] = rep
+    # -----------------------------------------
+    # 7. Replace numeric IDs with semantic names
+    # -----------------------------------------
+    semantic_unknown_map = {
+        entity: cluster_label_map[cid]
+        for entity, cid in unknown_cluster_map.items()
+    }
 
-    return unknown_cluster_map, cluster_label_map
+    return semantic_unknown_map, cluster_label_map
 
 def export_mapping_to_excel(
     df,

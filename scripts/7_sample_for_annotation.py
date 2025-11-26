@@ -52,6 +52,69 @@ def get_actor_count(df, actor=None, col1='ARG0', col2='ARG1'):
     actor_count = entities.value_counts()
     return actor_count
 
+def build_svo_key(df):
+    """
+    Build a duplicate-safe unique key for each SVO.
+    """
+    return (
+        df["sentence"].astype(str) + "|" +
+        df["ARG0_raw"].astype(str) + "|" +
+        df["B-V"].astype(str) + "|" +
+        df["ARG1_raw"].astype(str)
+    )
+
+def compute_sampling_needs(actor_count_sample, actor_count_corpus, min_target=50):
+    needs = {}
+    for actor, _ in actor_count_corpus.items():
+        current = actor_count_sample.get(actor, 0)
+        target = min_target
+        need = max(target - current, 0)
+        if need > 0:
+            needs[actor] = need
+    return needs
+
+def stratified_sample_next_batch(df, actors_df, sampled_df, needs_dict):
+    sampled_keys = set(build_svo_key(sampled_df))
+
+    # Build mapping: actor_name → category_label
+    mapping = dict(zip(actors_df.actor, actors_df.category))
+
+    df = df.copy()
+    df["actor_category"] = (
+        df["ARG0"].map(mapping).fillna(df["ARG1"].map(mapping))
+    )
+
+    df.rename(columns={'sentences':'sentence'}, inplace=True)
+
+    next_batch = []
+
+    for actor_cat, n_needed in needs_dict.items():
+
+        subset = df[df["actor_category"] == actor_cat].copy()
+        print(actor_cat, "→ subset before removing sampled:", len(subset))
+
+        if len(subset) == 0:
+            continue
+
+        subset["svo_key"] = build_svo_key(subset)
+
+        subset = subset[~subset["svo_key"].isin(sampled_keys)]
+        print(actor_cat, "→ subset after removing sampled:", len(subset))
+
+        if len(subset) == 0:
+            continue
+
+        subset = subset.drop_duplicates(subset=["svo_key"])
+
+        take_n = min(n_needed, len(subset))
+        next_batch.append(subset.sample(take_n, random_state=42))
+
+    if not next_batch:
+        return pd.DataFrame()
+
+    return pd.concat(next_batch, ignore_index=True)
+
+
 # %% main
 if __name__ == "__main__":
     # * Read files
@@ -59,57 +122,90 @@ if __name__ == "__main__":
     actors = pd.read_csv('../data/actor_directory/actor_directory.csv')
     sampled_data = pd.read_excel("../output/annotated_data.xlsx")
 
+    # Merge bad weather and extreme event in sampled data
+    sampled_data.loc[:, 'ARG0'] = sampled_data['ARG0'].replace('bad weather', 'extreme event')
+    sampled_data.loc[:, 'ARG1'] = sampled_data['ARG1'].replace('bad weather', 'extreme event')
+
     #%% Get the distribution of actors in the text corpus
     actor_count_corpus = get_actor_count(df, col1='ARG0', col2 = 'ARG1')
     actor_count_sample = get_actor_count(sampled_data, col1='ARG0', col2 = 'ARG1')
     
-    #%% sampled actor vs actors in corpus
+    # sampled actor vs actors in corpus
     actor_count = pd.merge(actor_count_sample, actor_count_corpus, left_index=True, right_index=True, how='outer', suffixes=('_sample', '_corpus'))
     actor_count['percentage_sampled'] = actor_count['count_sample']/actor_count['count_corpus']
-
     print(actor_count)
 
-    #%% TODO sample additional SVOs to match with minimum threshold for actor representation
+    #%% compute sampling needs
+    needs_dict = compute_sampling_needs(actor_count_sample, actor_count_corpus)
+    print("Additional samples needed:", needs_dict)
+
+    # clean corpus so actor categories are consistent
+    actors = actors[actors.keep == 0]
+    actor_list = list(actors.actor.unique())
+
+    # Filter corpus for relevant SVOs
+    df_corpus = df[
+    df["ARG0"].isin(actor_list) | df["ARG1"].isin(actor_list)].copy()
+
+    #%%
+    next_batch = stratified_sample_next_batch(
+    df=df_corpus,
+    actors_df=actors,
+    sampled_df=sampled_data,
+    needs_dict=needs_dict)
 
     # %%
-    # * Filter actors of interest
-    actors = actors[actors.keep == 1]
-    actor_categories = list(actors.category.unique())
-    # under_sampled_actors = [
-    #     "regional government",
-    #     "critical infra",
-    #     "essential goods",
-    #     "bad weather",
-    #     "professional",
-    #     "agriculture",
-    #     "climate change",
-    #     "environmentalist",
-    #     "environment",
-    #     "national government",
-    # ]
-    # actor_categories = under_sampled_actors
-    # %%
-    # * Filter articles mentioning actors of interest
-    df = df[df["ARG0"].isin(actor_categories) | df["ARG1"].isin(actor_categories)]
+    # # * Filter actors of interest
+    # actors = actors[actors.keep == 1]
+    # actor_categories = list(actors.category.unique())
+    # # under_sampled_actors = [
+    # #     "regional government",
+    # #     "critical infra",
+    # #     "essential goods",
+    # #     "bad weather",
+    # #     "professional",
+    # #     "agriculture",
+    # #     "climate change",
+    # #     "environmentalist",
+    # #     "environment",
+    # #     "national government",
+    # # ]
+    # # actor_categories = under_sampled_actors
+    # # %%
+    # # * Filter articles mentioning actors of interest
+    # df = df[df["ARG0"].isin(actor_categories) | df["ARG1"].isin(actor_categories)]
 
-    # %%
-    # * Filter previously sampled data
-    # df = df[~df["article_index"].isin(sampled_data.article_index)]
-    df = df[df["sentence_index"].isin(sampled_data.sentence_index)]
-    # %%
-    # * Prepare sample dataset for annotation
-    # sampled_data = sample_top_sentence_indices(df, top_n=20, actor_categories=actor_categories)
+    # # %%
+    # # * Filter previously sampled data
+    # # df = df[~df["article_index"].isin(sampled_data.article_index)]
+    # df = df[df["sentence_index"].isin(sampled_data.sentence_index)]
+    # # %%
+    # # * Prepare sample dataset for annotation
+    # # sampled_data = sample_top_sentence_indices(df, top_n=20, actor_categories=actor_categories)
 
-    # sample SVOs with same sentence index
-    df = pd.concat([sampled_data, df])
-    df = (
-        df.groupby("sentence_index", group_keys=False)
-        .apply(lambda group: group.drop_duplicates(subset=["ARG0_raw", "ARG1_raw"]))
-        .reset_index(drop=True)
-    )
-    sampled_data = df[df["arg0_role"].isna() & df["arg1_role"].isna()]
+    # # sample SVOs with same sentence index
+    # df = pd.concat([sampled_data, df])
+    # df = (
+    #     df.groupby("sentence_index", group_keys=False)
+    #     .apply(lambda group: group.drop_duplicates(subset=["ARG0_raw", "ARG1_raw"]))
+    #     .reset_index(drop=True)
+    # )
+    # sampled_data = df[df["arg0_role"].isna() & df["arg1_role"].isna()]
+    #%%
+    next_batch["narratives"] = (
+    next_batch["ARG0"] + " " +
+    next_batch["B-V"] + " " +
+    next_batch["ARG1"])
+
+    next_batch['svo_type'] = 'triplet'
+
+    cols = ['doc_id', "sentence", "title", "date", "publisher", "text",
+    "doc", "source", "sentence_id", "ARG0", "ARG1", "sentiment_score",
+    "ARG0_raw",	"B-V", "ARG1_raw", "narratives", "svo_type"]
+
+    next_batch = next_batch.loc[:, cols].copy()
     # %%
     # * Export sample dataset for annotation
-    sampled_data.to_excel("../output/training_data_for_annotation_v3.xlsx", index=False)
+    next_batch.to_excel("../data/training_data/sampled_data_for_annotation.xlsx", index=False)
 
 # %%
