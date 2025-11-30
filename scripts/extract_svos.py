@@ -1,9 +1,7 @@
 # Extract SVOs
 """This script splits the 'cleaned' text data into sentences and for each sentence, extract the Subject-Verb-Object structures"""
 
-#  %%------------------------------------------------------------------------- #
-#                                  Import libraries                            #
-# ---------------------------------------------------------------------------- #
+#  %% Import libraries 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,25 +25,44 @@ from sklearn.metrics.pairwise import cosine_similarity
 import hdbscan
 from collections import Counter
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import json
 
-# %% Methods                                   
+# %% Methods 
+
+def export_final_mapping_dict(mapping_dict, output_path):
+    """
+    Save the final mapping dictionary to a JSON file 
+    with sorted keys, UTF-8 encoding, and clean formatting.
+    """
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(mapping_dict, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+    print(f"Final mapping dictionary exported to:\n{output_path}") 
+                                  
 def clean_roles(df, preprocessor, output_path=None):
     """
     Clean ARG roles and verbs after extraction.
-    Operates ONLY on available ARG columns.
+    Only clean values that are strings; skip NaN/float values.
     """
-    # Identify role columns present
+    # Identify present role columns
     role_cols = [c for c in ["ARG0", "B-V", "ARG1", "ARG2"] if c in df.columns]
 
     if not role_cols:
         print("No role columns found — skipping clean_roles()")
         return df
 
-    # Only pass role columns to the processor, one dict per row
-    roles = df[role_cols].to_dict(orient="records")
+    # Convert role columns into a record list and clean non-string values
+    roles_clean = []
+    for row in df[role_cols].to_dict(orient="records"):
+        cleaned_row = {
+            k: (v if isinstance(v, str) else None)   # keep only strings
+            for k, v in row.items()
+        }
+        roles_clean.append(cleaned_row)
 
+    # Run the relatio preprocessor only on cleaned rows
     postproc = preprocessor.process_roles(
-        roles,
+        roles_clean,
         max_length=100,
         progress_bar=True,
         output_path=output_path
@@ -53,41 +70,47 @@ def clean_roles(df, preprocessor, output_path=None):
 
     post_df = pd.DataFrame(postproc)
 
-    # Replace only the existing columns (keep robustness)
+    # Merge results: only replace values that were originally strings
     for col in role_cols:
         if col in post_df.columns:
-            df[col] = post_df[col]
+            df[col] = df.apply(
+                lambda r: post_df.at[r.name, col] 
+                          if isinstance(r[col], str) else r[col],
+                axis=1
+            )
 
     return df
 
-def perform_srl(
-    df,
-    preprocessor,
-    model_path="https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz"
-):
-    """
-    Run SRL + (optional) SVO extraction on sentence-level DataFrame.
-    Requires df to have: ["sentence", "sentence_index"].
-    """
+def perform_srl(df, preprocessor,
+                model_path="https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz"):
 
-    # Safety check
     if "sentence_index" not in df.columns:
-        df = df.reset_index(drop=False).rename(columns={"index": "sentence_index"})
+        df = df.reset_index().rename(columns={"index": "sentence_index"})
 
-    # -----------------------------
-    # 1. RUN SRL
-    # -----------------------------
+    # SVO extraction (one row per sentence)
+    svo_idx, svo_roles = preprocessor.extract_svos(
+        df["sentence"].tolist(),
+        expand_nouns=True,
+        only_triplets=True,
+        progress_bar=True,
+    )
+    svo_df = pd.DataFrame(svo_roles)
+    svo_df["sentence_index"] = svo_idx
+
+    # SVO suffix = "_svo"
+    df = df.merge(svo_df, on="sentence_index", how="left", suffixes=("", "_svo"))
+
+    # SRL extraction (may produce multiple rows)
     from relatio import SRL as SRLModel
 
     srl_model = SRLModel(
         path=model_path,
-        batch_size=10,
-        cuda_device=-1,
+        batch_size=8,
+        cuda_device=-1
     )
 
     srl_res = srl_model(df["sentence"].tolist(), progress_bar=True)
 
-    # Extract ARG roles
     srl_roles, srl_idx = extract_roles(
         srl_res,
         used_roles=["ARG0", "B-V", "B-ARGM-NEG", "B-ARGM-MOD", "ARG1", "ARG2"],
@@ -98,24 +121,17 @@ def perform_srl(
     srl_df = pd.DataFrame(srl_roles)
     srl_df["sentence_index"] = srl_idx
 
-    # Merge SRL roles
-    df = df.merge(srl_df, on="sentence_index", how="left")
-
-    # -----------------------------
-    # 2. RUN SVO extraction
-    # -----------------------------
-    svo_idx, svo_roles = preprocessor.extract_svos(
-        df["sentence"].tolist(),
-        expand_nouns=True,
-        only_triplets=True,
-        progress_bar=True
+    # MERGE: SRL should overwrite existing ARG0/ARG1
+    df = df.merge(
+        srl_df,
+        on="sentence_index",
+        how="left",
+        suffixes=("_old", "")  # SRL wins
     )
 
-    svo_df = pd.DataFrame(svo_roles)
-    svo_df["sentence_index"] = svo_idx
-
-    # Merge SVO roles (with suffix "_svo")
-    df = df.merge(svo_df, on="sentence_index", how="left", suffixes=("", "_svo"))
+    # Drop junk columns from earlier extractions if they appear
+    drop_cols = [c for c in df.columns if c.endswith("_old")]
+    df = df.drop(columns=drop_cols)
 
     return df
 
@@ -1099,9 +1115,85 @@ def visualize_actor_clusters_interactive(
 
     return fig
 
-# %%-------------------------------------------------------------------------- #
-#                                     Main                                     #
-# ---------------------------------------------------------------------------- #
+def map_clusters_to_actors(
+    unknown_cluster_labels,
+    actor_dict,
+    similarity_threshold=0.60,
+    model_name="all-mpnet-base-v2",
+    export_path=None):
+    """
+    Map semantic cluster heads (medoids) to final actor heads using embedding similarity.
+
+    INPUTS
+    ------
+    unknown_cluster_labels : dict
+        cluster_id -> cluster medoid string
+    actor_dict : dict
+        category -> actor (actor names are final cluster heads)
+    similarity_threshold : float
+        cosine similarity threshold for assigning a cluster to an actor
+    model_name : str
+        embedding model to use (default: all-mpnet-base-v2)
+    export_path : str or None
+        if provided, saves mapping to CSV for manual review
+
+    RETURNS
+    -------
+    cluster_to_actor : dict
+        cluster_head -> actor_name or None
+    cluster_similarity : dict
+        cluster_head -> best similarity score
+    """
+
+    # Extract cluster heads & actor heads
+    cluster_heads = list(unknown_cluster_labels.values())
+    actor_heads   = list(set(actor_dict.values()))
+
+    if len(cluster_heads) == 0:
+        print("No clusters to map.")
+        return {}, {}
+
+    # Embed all labels
+    embedder = SentenceTransformer(model_name)
+
+    cluster_emb = embedder.encode(cluster_heads, convert_to_numpy=True)
+    actor_emb   = embedder.encode(actor_heads, convert_to_numpy=True)
+
+    # Compute cosine similarity matrix
+    sim = cosine_similarity(cluster_emb, actor_emb)
+
+    #  Assign clusters to actors if similarity >= threshold
+    cluster_to_actor = {}
+    cluster_similarity = {}
+
+    for i, ch in enumerate(cluster_heads):
+        best_idx  = sim[i].argmax()
+        best_sim  = sim[i][best_idx]
+        best_actor = actor_heads[best_idx]
+
+        cluster_similarity[ch] = float(best_sim)
+
+        if best_sim >= similarity_threshold:
+            cluster_to_actor[ch] = best_actor
+        else:
+            cluster_to_actor[ch] = None  # not an actor cluster
+
+    #  Optional export for manual review
+    if export_path:
+        df = pd.DataFrame({
+            "cluster_head": cluster_heads,
+            "mapped_actor": [cluster_to_actor[ch] for ch in cluster_heads],
+            "similarity":   [cluster_similarity[ch] for ch in cluster_heads],
+        })
+
+        df = df.sort_values("similarity", ascending=False)
+        df.to_csv(export_path, index=False)
+        print(f"Cluster-to-actor mapping exported to: {export_path}")
+
+    return cluster_to_actor, cluster_similarity
+
+# %% Main
+
 if __name__ == "__main__":
     ROOT = Path(__file__).resolve().parent.parent 
     # * Read data
@@ -1141,10 +1233,9 @@ if __name__ == "__main__":
     # Compute sentiment on unique sentences
     sentiment_df = compute_sentiment(sentences, tokenizer, model)
     sentences = sentences.merge(sentiment_df, on="sentence_global_id", how="left")
-
-
+##############################################################################################################
     # %% Read sentences_svo
-    # sentences = pd.read_csv(f"{file_path}/news_corpus_svo.csv.gz", compression="gzip")
+    sentences = pd.read_csv(f"{file_path}/news_corpus_srl_sentiment.csv.gz", compression="gzip")
 
     # %% Drop too long and too short articles
     sentences = drop_long_documents(sentences, sentence_col="sentence_x", threshold=1000)
@@ -1184,8 +1275,8 @@ if __name__ == "__main__":
     for col in ['ARG0', 'ARG1']:
         # preserve raw values
         sentences.loc[:, f'{col}_raw'] = sentences[col]
-        sentences.loc[:, col] = sentences[col].map(entity_dict)
-        sentences.loc[:, col] = sentences[col].map(actor_dict)
+        sentences.loc[:, col] = sentences[col].replace(entity_dict)
+        sentences.loc[:, col] = sentences[col].replace(actor_dict)
 
 
     # Prepare embeddungs for known labels
@@ -1205,6 +1296,21 @@ if __name__ == "__main__":
         unknown_entities,
         method="hdbscan")
     
+    # --- Map semantic clusters → actors ---
+    cluster_to_actor, cluster_similarity = map_clusters_to_actors(
+        unknown_cluster_labels=unknown_cluster_labels,
+        actor_dict=actor_dict,
+        similarity_threshold=0.60,
+        model_name="all-mpnet-base-v2",
+        export_path=str(ROOT / "data/actor_directory/cluster_to_actor_map.csv")
+    )
+
+    # Replace cluster labels in unknown_mapping using cluster_to_actor
+    # (Only where cluster matches an actor)
+    for entity, cluster_head in unknown_mapping.items():
+        if cluster_to_actor.get(cluster_head) is not None:
+            unknown_mapping[entity] = cluster_to_actor[cluster_head]
+
     # Build final mapping dictionary (no circularity)
     final_mapping = build_final_mapping(
         entity_dict=entity_dict,
@@ -1218,11 +1324,21 @@ if __name__ == "__main__":
     entity_cols=["ARG0_raw", "ARG1_raw"],
     output_path= str(ROOT / "data/actor_directory/actor_clusters_embeddings.xlsx"))
 
-    # Apply final mapping to ARG0 & ARG1 once
+    #%% Apply final mapping to ARG0 & ARG1 again
     sentences = apply_final_mapping(sentences, final_mapping)
+    for col in ['ARG0', 'ARG1']:
+        # preserve raw values
+        # sentences.loc[:, f'{col}_raw'] = sentences[col]
+        sentences.loc[:, col] = sentences[col].replace(entity_dict)
+        sentences.loc[:, col] = sentences[col].replace(actor_dict)
+
+    #%% TODO: export mapper dict 
+    export_final_mapping_dict(
+    final_mapping,
+    output_path=str(ROOT / "data/actor_directory/actor_mapping.json"))
 
 
-#%%
+    #%%
     embedder = SentenceTransformer("all-mpnet-base-v2")  
 
     fig = visualize_actor_clusters_interactive(
