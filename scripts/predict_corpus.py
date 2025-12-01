@@ -43,9 +43,10 @@ roberta_model = RobertaModel.from_pretrained(MODEL_NAME).to(device).eval()
 df_corpus = pd.read_csv(f"{ROOT}/data/news_corpus/news_corpus_svo.csv.gz", compression='gzip')
 df_corpus.rename(columns={"sentences":"sentence"}, inplace=True)
 df_corpus["sentence"] = df_corpus["sentence"].astype(str)
+df_corpus.rename(columns={'sentiment_score':'sentiment'}, inplace=True)
 
 #%% Build embeddings and features
-CHUNK_SIZE = 2000   # recommended starting value
+CHUNK_SIZE = 2000   
 
 results_dir = ROOT / "data/predictions/chunks"
 results_dir.mkdir(parents=True, exist_ok=True)
