@@ -8,7 +8,7 @@ from tqdm import tqdm
 from transformers import RobertaTokenizer, RobertaModel
 import model_training as mt
 from model_training import build_structured_features, embed_text
-
+import gc
 #%% Global Config 
 SEED = 42
 np.random.seed(SEED)
@@ -45,35 +45,63 @@ df_corpus.rename(columns={"sentences":"sentence"}, inplace=True)
 df_corpus["sentence"] = df_corpus["sentence"].astype(str)
 
 #%% Build embeddings and features
-X_text = df_corpus["sentence"].tolist()
+CHUNK_SIZE = 2000   # recommended starting value
 
-X_emb = embed_text(
-    text_list=X_text,
-    tokenizer=tokenizer,
-    model=roberta_model,
-    device=device,
-    max_length=MAX_LEN,
-    batch_size=BATCH_SIZE
-)
+results_dir = ROOT / "data/predictions/chunks"
+results_dir.mkdir(parents=True, exist_ok=True)
 
-X_struct, _ = build_structured_features(df_corpus, ohe=ohe, fit=False)
-X_final = np.hstack([X_emb, X_struct.to_numpy().astype(np.float32)])
+for start in range(0, len(df_corpus), CHUNK_SIZE):
+    end = min(start + CHUNK_SIZE, len(df_corpus))
+    print(f"Processing rows {start}–{end}")
 
-#%% Predict binary labels + probabilities
-probas = clf.predict_proba(X_final)
+    df_chunk = df_corpus.iloc[start:end].copy()
 
-binary_preds = np.zeros((X_final.shape[0], len(label_cols)), dtype=int)
-prob_df = pd.DataFrame(index=df_corpus.index)
+    # Add word count
+    df_chunk["sentence_word_count"] = (
+        df_chunk["sentence"].str.strip().str.split().apply(len)
+    )
 
-for i, lbl in enumerate(label_cols):
-    prob_df[lbl + "_prob"] = probas[i][:, 1]
-    binary_preds[:, i] = (probas[i][:, 1] > 0.5).astype(int)
+    # GPU embeddings
+    X_text = df_chunk["sentence"].tolist()
+    X_emb = embed_text(
+        text_list=X_text,
+        tokenizer=tokenizer,
+        model=roberta_model,
+        device=device,
+        max_length=MAX_LEN,
+        batch_size=BATCH_SIZE
+    )
 
-pred_df = pd.DataFrame(binary_preds, columns=label_cols)
+    # Structured features
+    X_struct, _ = build_structured_features(df_chunk, ohe=ohe, fit=False)
 
+    X_final = np.hstack([X_emb, X_struct.to_numpy().astype(np.float32)])
+
+    # Predict
+    probas = clf.predict_proba(X_final)
+
+    # Store chunk predictions
+    binary_preds = np.zeros((X_final.shape[0], len(label_cols)), dtype=int)
+    prob_df = pd.DataFrame(index=df_chunk.index)
+
+    for i, lbl in enumerate(label_cols):
+        prob_df[lbl + "_prob"] = probas[i][:, 1]
+        binary_preds[:, i] = (probas[i][:, 1] > 0.5).astype(int)
+
+    pred_df = pd.DataFrame(binary_preds, columns=label_cols, index=df_chunk.index)
+
+    out_chunk = pd.concat([df_chunk, pred_df, prob_df], axis=1)
+
+    out_chunk.to_parquet(results_dir / f"pred_{start}_{end}.parquet")
+
+    # FREE MEMORY
+    del X_emb, X_struct, X_final, probas, pred_df, out_chunk
+    torch.cuda.empty_cache()
+    gc.collect()
 
 #%% Combine predictions with original corpus
-output = pd.concat([df_corpus, pred_df, prob_df], axis=1)
+chunk_files = sorted(results_dir.glob("pred_*.parquet"))
+output = pd.concat([pd.read_parquet(cf) for cf in chunk_files], ignore_index=True)
 
 
 #%% Save results
