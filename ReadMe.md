@@ -19,6 +19,7 @@ pynpf
 |  ├─ model_performance           // model role classification matrix
 |  ├─ news_corpus                 // news corpus used for analysis
 |  ├─ predictions                 // results
+|  ├─ survey_data                 // survey results from qualtrics
 |  ├─ training_data               // annotated data used for training the model
 ├─ figures                        // main result figures
 |  ├─ descriptive                 // newspaper corpus descriptive

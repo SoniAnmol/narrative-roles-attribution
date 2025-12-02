@@ -15,7 +15,6 @@ from matplotlib import gridspec
 ROOT = Path(__file__).resolve().parent.parent
 
 # %% methods
-
 def plot_top_roles_trends(
     output_clean,
     top_n=12,
@@ -188,9 +187,9 @@ def plot_top_roles_trends(
         # White gridlines
         for y in yticks:
             ax.hlines(y, df["month"].min(), df["month"].max(),
-                      colors="white", linestyles="--", linewidth=0.7, alpha=0.4)
+                      colors="white", linestyles=":", linewidth=0.7, alpha=0.4)
 
-        ax.grid(which="major", color="#ffffff", alpha=0.98)
+        ax.grid(which="major", color="#ffffff", alpha=0.98, linestyle=':')
 
         # Right-side labels
         band_mid_last = {}
@@ -229,7 +228,7 @@ def plot_top_roles_trends(
             ax.add_patch(
                 mpatches.Rectangle(
                     (last_x + box_offset, y_target - square_size/2),
-                    width=pd.Timedelta(days=2),
+                    width=pd.Timedelta(days=2), # pyright: ignore[reportArgumentType]
                     height=square_size,
                     facecolor=color,
                     edgecolor="#555",
@@ -339,8 +338,14 @@ if __name__ == "__main__":
     df_article = df_article[~no_role_mask].copy()
     print(f"Kept {len(df_article)} Articles with narrative character roles")
 
-# %%
+# %% Plot top role trends overtime
 figure_export = Path(ROOT) / "figures/role_trends.png"
 plot_top_roles_trends(df_article, top_n=14, show_total_line=False, figure_export=figure_export)
 
-# %%
+# %% TODO Plot comparative roles with survey data
+
+# read survey data
+
+# map narrative character roles form the survey questions
+
+# plot the dumbell chart
