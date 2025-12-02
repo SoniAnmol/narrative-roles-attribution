@@ -9,6 +9,11 @@ by Tina Comes, Giulia Piccillo, Anmol Soni, and Tania Treibich.
 The study investigates how the May 2023 floods in Emilia-Romagna, Italy, influenced climate change discourse.  
 It compares **media framing** and **public attribution** using narrative character roles (heroes, villains, victims) to highlight asymmetries between newspaper coverage and survey responses. Working draft is available upon request.
 
+## Methods
+- Newspaper corpus analysis
+- Narrative character-roles framework
+- Survey data from flood-affected communes
+
 ## Contents
 ```
 pynpf
@@ -37,19 +42,12 @@ pynpf
    ├─ sample_for_annotation.py    // sample sentences for annotation
    ├─ model_training.py           // train model to extract narrative character roles
    ├─ predict_corpus.py           // extract narrative character roles for the entire corpus
-   ├─ results.py                 // analyse and visualise the results
+   ├─ results.py                  // analyse and visualise the results
 
   Note that `data` and `models` folders is not uploaded in the git repo.
 ```
-
-## Methods
-- Newspaper corpus analysis
-- Narrative character-roles framework
-- Survey data from flood-affected communes
 
 ## Key Findings
 - Media emphasized immediate impacts and institutional responses.
 - Residents, particularly from floods affected commmunes more frequently attributed floods to climate change.
 - Attribution to climate change correlated with pro-environmental behavioral shifts.
-
-

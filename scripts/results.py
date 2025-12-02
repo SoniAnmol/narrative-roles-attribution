@@ -9,7 +9,7 @@ import matplotlib.cm as cm
 from matplotlib.lines import Line2D
 import matplotlib.dates as mdates
 import matplotlib.patches as mpatches
-from matplotlib import gridspec
+from matplotlib import axis, gridspec
 
 # globals
 ROOT = Path(__file__).resolve().parent.parent
@@ -338,14 +338,73 @@ if __name__ == "__main__":
     df_article = df_article[~no_role_mask].copy()
     print(f"Kept {len(df_article)} Articles with narrative character roles")
 
-# %% Plot top role trends overtime
-figure_export = Path(ROOT) / "figures/role_trends.png"
-plot_top_roles_trends(df_article, top_n=14, show_total_line=False, figure_export=figure_export)
+    # %% Plot top role trends overtime
+    figure_export = Path(ROOT) / "figures/role_trends.png"
+    plot_top_roles_trends(df_article, top_n=14, show_total_line=False, figure_export=figure_export)
 
-# %% TODO Plot comparative roles with survey data
+    # %% TODO Plot comparative roles with survey data
 
-# read survey data
+    # read survey data
+    survey_data_path = Path(ROOT) / "data/survey_data/survey_data.csv"
+    survey_data = pd.read_csv(survey_data_path)
+    # clean survey data
+    # subset the dataframe by only selecting the responses that reached the end of the survey and selected 'Submit'
+    survey_data = survey_data[survey_data['Q50'] == 'Submit']
+    # remove responses filled during testing through preview
+    survey_data = survey_data[survey_data.Status == "IP Address"]
 
-# map narrative character roles form the survey questions
+    survey_data.dropna(subset=['Q20_0_GROUP', 'Q17_0_GROUP', 'Q12_0_GROUP'], inplace=True)
+    print(f"Valid response count: {len(survey_data)}")
 
-# plot the dumbell chart
+    # map narrative character roles form the survey questions
+    actor_mapper = {'local businesses':'business',
+                    'local businesses and enterprises':'business',
+                    'residents/local population':'people',
+                    'Houses and buildings':'people',
+                    'Critical infrastructure, including roads and power lines':'essential goods and infrastructure',
+                    'local residents':'people',
+                    'farmers and agricultural companies':'agriculture',
+                    'the farmers':'agriculture',
+                    'the ngos':'civil society',
+                    'The national government':'national government',
+                    'The regional government':'regional government',
+                    'Local authorities':'municipality',
+                    'The environment, including plants and animals':'environment'}
+
+    for role in ['hero', 'villain', 'victim']:
+        if role == 'hero':
+            govt_col = 'Q21'
+            role_col = 'Q20_0_GROUP'
+
+        elif role == 'villain':
+            govt_col = 'Q13'
+            role_col = 'Q12_0_GROUP'
+
+        elif role == 'victim':
+            role_col = 'Q17_0_GROUP'
+
+        survey_data[role] = [role.split(',')[0] for role in survey_data[role_col]]
+        survey_data[role] = [s.strip().lower() for s in survey_data[role]]
+        if role != 'victim':
+            survey_data.loc[
+                survey_data[role] == "the government", role] = survey_data.loc[
+                survey_data[role] == "the government", govt_col]
+        survey_data[role] = survey_data[role].replace(actor_mapper)
+        print(survey_data[role].value_counts())
+    # add victim_non_living 
+    survey_data['victim_non_living'] = survey_data['Q16'].replace(actor_mapper)
+    print(survey_data['victim_non_living'].value_counts())
+
+    #%% compute the role counts for newspaper corpus
+    newspaper_role_counts = []
+    for role in ['hero', 'villain', 'victim']:
+        role_cols = output.columns[output.columns.str.endswith((f"-{role}"))].tolist()
+        newspaper_role_counts.append(df_article[role_cols].sum(axis=0))
+    newspaper_role_counts = pd.concat(newspaper_role_counts)    
+
+    #%% plot the dumbell chart
+
+
+
+
+    # %%
