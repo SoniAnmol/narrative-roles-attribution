@@ -138,7 +138,7 @@ def plot_top_roles_trends(
         ax.set_ylim(0, y_max)
 
         # Stacked layers
-        layer_alpha = 0.55
+        layer_alpha = 0.75
         for col in cols_sorted:
             color = col_color[col]
             ax.fill_between(
@@ -149,7 +149,15 @@ def plot_top_roles_trends(
                 color=color,
                 edgecolor=color,
                 linewidth=1.4
+            )   
+            ax.plot(
+                df["month"],
+                stacked_top[col],
+                color="white",
+                linewidth=1.5,
+                alpha=0.9,
             )
+
 
         # Total line
         if show_total_line:
@@ -284,6 +292,12 @@ if __name__ == "__main__":
     chunk_files = sorted(results_dir.glob("pred_*.parquet"))
     output = pd.concat([pd.read_parquet(cf) for cf in chunk_files], ignore_index=True)
 
+    # remove actor-role combinations with poor F1 score
+    f1_score_path = Path(ROOT) / "data/model_performance/classification_report.xlsx"
+    f1_score = pd.read_excel(f1_score_path)
+    drop_roles = f1_score.loc[f1_score['f1-score']<0.5, 'Unnamed: 0']
+    output.drop(columns=drop_roles, inplace=True)
+
     # rename actor for clarity
     output.rename(columns={'region-hero':'regional government-hero',
                            'region-villain':'regional government-villain',
@@ -295,7 +309,6 @@ if __name__ == "__main__":
                      'title', 'date', 'publisher', 'text', 'source',
                      'publisher_category', 'doc', 'sentiment_label', 'sentiment',
                      'sentence_word_count']
-
 
 
 # %% aggregate results at sentence level by keeping first
@@ -328,6 +341,6 @@ if __name__ == "__main__":
 
 # %%
 figure_export = Path(ROOT) / "figures/role_trends.png"
-plot_top_roles_trends(df_article, top_n=12, show_total_line=False, figure_export=figure_export)
+plot_top_roles_trends(df_article, top_n=14, show_total_line=False, figure_export=figure_export)
 
 # %%
