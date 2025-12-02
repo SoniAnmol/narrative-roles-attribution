@@ -12,34 +12,39 @@ It compares **media framing** and **public attribution** using narrative charact
 ## Contents
 ```
 pynpf
-├─ figures
+├─ data
+|  ├─ actor_directory             // manually annotated and k-means clustered actor groups
+|  ├─ gnews                       // newsarticles downloaded from google-news
+|  ├─ lexis_nexis                 // newsarticles downloaded from lexis-nexis
+|  ├─ model_performance           // model role classification matrix
+|  ├─ news_corpus                 // news corpus used for analysis
+|  ├─ predictions                 // results
+|  ├─ training_data               // annotated data used for training the model
+├─ figures                        // main result figures
+|  ├─ descriptive                 // newspaper corpus descriptive
+├─ models                         // offline models
+|  ├─ classifier                  // trained classifier RoBERTa + XG-Boost model
+|  ├─ roberta-sentiment           // RoBERTa sentiment analysis model
 ├─ ReadMe.md
 ├─ requirements.txt
-└─ scripts
-   ├─ lexis_nexis_to_dataframe.py
-   ├─ gnews_article_scraper.py
-   ├─ news_data_preparation.py
-   ├─ extract_svos.py
-   ├─ sample_for_annotation.py
-   ├─ training_model.py
-   └─ visualisations
+└─ scripts                        // The scripts should be executed in following sequence
+   ├─ lexis_nexis_to_dataframe.py // create dataframe from articles downloaded from Lexis-Nexis
+   ├─ gnews_article_scraper.py    // download the articles from Google News
+   ├─ news_data_preparation.py    // clean and prepare the text corpus
+   ├─ named_entity_recognition.py // extract named enities from the corpus for actor clustering
+   ├─ extract_svos.py             // split the corpus into sentences and extract Subject-Verb-Objects
+   ├─ sample_for_annotation.py    // sample sentences for annotation
+   ├─ model_training.py           // train model to extract narrative character roles
+   ├─ predict_corpus.py           // extract narrative character roles for the entire corpus
+   ├─ results.py                 // analyse and visualise the results
 
+  Note that `data` and `models` folders is not uploaded in the git repo.
 ```
 
 ## Methods
 - Newspaper corpus analysis
 - Narrative character-roles framework
 - Survey data from flood-affected communes
-
-## Sequence of running scripts
-The scripts must be executed in the following order:
-1. **gnews_articles_scraper.py** Download the articles from Google News
-1. **lexis_nexis_to_dataframe.py** Create dataframe from articles downloaded from Lexis-Nexis 
-1. **news_data_preparation.py** Clean and prepare the text corpus
-<!-- 1. **named_entitiy_recognition.py** Extract named enities from the corpus -->
-1. **extract_svos.py** Split the corpus into sentences and extract Subject-Verb-Objects
-1. **sample_data_for_annotation.py** Sample sentences for annotation
-1. **training_model.py** Train model to classify Narrative Character Roles
 
 ## Key Findings
 - Media emphasized immediate impacts and institutional responses.
