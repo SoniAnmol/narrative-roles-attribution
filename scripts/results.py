@@ -280,7 +280,8 @@ def plot_top_roles_trends(
 
     plt.tight_layout()
     if figure_export:
-        plt.savefig(figure_export, dpi=300)
+        plt.savefig(figure_export, dpi=300, bbox_inches='tight',
+        transparent=True)
     plt.show()
 
 
@@ -576,3 +577,209 @@ if __name__ == "__main__":
 
 
     # %%
+    def plot_single_role_trend(
+        output_clean,
+        role="hero",
+        top_n=12,
+        flood_date="2023-05-01",
+        show_total_line=True,
+        figure_export=None
+    ):
+        """
+        Plot a single narrative role (hero, villain, or victim).
+        Matches styling of plot_top_roles_trends().
+        """
+
+        # Validate input
+        if role not in ["hero", "villain", "victim"]:
+            raise ValueError("role must be 'hero', 'villain', or 'victim'")
+
+        # ---------------------------------------------------------
+        # Identify relevant columns
+        # ---------------------------------------------------------
+        role_suffix = f"-{role}"
+        role_cols = [
+            c for c in output_clean.columns
+            if c.endswith(role_suffix) and not c.endswith("_prob")
+        ]
+
+        if len(role_cols) == 0:
+            raise ValueError(f"No columns found for role: {role}")
+
+        # ---------------------------------------------------------
+        # Prepare monthly data
+        # ---------------------------------------------------------
+        df = output_clean.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
+
+        monthly = df.groupby("month")[role_cols].sum().reset_index()
+
+        # Normalize (%)
+        monthly["global_total"] = monthly[role_cols].sum(axis=1)
+        pct = monthly.copy()
+        for col in role_cols:
+            pct[col] = (pct[col] / pct["global_total"]) * 100
+
+        # ---------------------------------------------------------
+        # Select top-N roles for this role type
+        # ---------------------------------------------------------
+        global_counts = monthly[role_cols].sum().sort_values(ascending=False)
+        top_cols = global_counts.head(top_n).index.tolist()
+
+        # ---------------------------------------------------------
+        # Color palette
+        # ---------------------------------------------------------
+        def get_palette(n, cmap_name, minimum=0.35, maximum=1.0):
+            base = cm.get_cmap(cmap_name)
+            vals = np.linspace(minimum, maximum, n)
+            colors = [base(v) for v in vals]
+            return colors[::-1]
+
+        if role == "hero":
+            colors = get_palette(len(top_cols), "Greens")
+        elif role == "villain":
+            colors = get_palette(len(top_cols), "Purples")
+        else:
+            colors = get_palette(len(top_cols), "Blues")
+
+        col_color = dict(zip(top_cols, colors))
+
+        # ---------------------------------------------------------
+        # Compute layer stacking
+        # ---------------------------------------------------------
+        df_plot = pct[["month"] + top_cols].copy()
+
+        cols_sorted = df_plot[top_cols].sum().sort_values(ascending=False).index.tolist()
+
+        stacked_bottom = {}
+        stacked_top = {}
+
+        cumulative = np.zeros(len(df_plot))
+        for col in cols_sorted:
+            bottom = cumulative.copy()
+            top = bottom + df_plot[col].values
+            stacked_bottom[col] = bottom
+            stacked_top[col] = top
+            cumulative = top
+
+        row_sums = df_plot[cols_sorted].sum(axis=1)
+        y_max = row_sums.max() * 1.05
+
+        # ---------------------------------------------------------
+        # FIGURE
+        # ---------------------------------------------------------
+        fig, ax = plt.subplots(figsize=(18, 10), dpi=300)
+
+        # Layered plot
+        for col in cols_sorted:
+            ax.fill_between(
+                df_plot["month"],
+                stacked_bottom[col],
+                stacked_top[col],
+                alpha=0.75,
+                color=col_color[col],
+                edgecolor=col_color[col],
+                linewidth=1.4
+            )
+            ax.plot(
+                df_plot["month"],
+                stacked_top[col],
+                color="white",
+                linewidth=1.5,
+                alpha=0.9
+            )
+
+        # Total line optionally
+        if show_total_line:
+            ax.plot(df_plot["month"], row_sums, color="black", linewidth=2.4, marker="o")
+
+        # Flood vertical line
+        flood_dt = pd.Timestamp(flood_date)
+        ax.axvline(flood_dt, color="red", linestyle="--", linewidth=1.3)
+
+        # ---------------------------------------------------------
+        # Labels on right side (same float connector logic)
+        # ---------------------------------------------------------
+        band_mid_last = {
+            c: (stacked_bottom[c][-1] + stacked_top[c][-1]) / 2 for c in cols_sorted
+        }
+        connector_order = sorted(cols_sorted, key=lambda c: band_mid_last[c], reverse=True)
+
+        last_x = df_plot["month"].max()
+        box_offset = pd.Timedelta(days=3)
+        text_offset = pd.Timedelta(days=6)
+
+        used_positions = []
+        min_gap = 1.2
+
+        for col in connector_order:
+            color = col_color[col]
+            y_start = band_mid_last[col]
+            y_target = y_start
+
+            for used in used_positions:
+                if abs(y_target - used) < min_gap:
+                    y_target = used - min_gap
+
+            used_positions.append(y_target)
+
+            # connector line
+            ax.plot([last_x, last_x + box_offset], [y_start, y_target],
+                    color="#666", linewidth=1.2, alpha=0.9)
+
+            # color square
+            ax.add_patch(
+                mpatches.Rectangle(
+                    (last_x + box_offset, y_target - 0.5),
+                    width=pd.Timedelta(days=2),
+                    height=1,
+                    facecolor=color,
+                    edgecolor="#555",
+                    linewidth=1.0,
+                    alpha=0.75,
+                    transform=ax.transData,
+                    clip_on=False
+                )
+            )
+
+            # text label
+            label = col.split("-")[0]
+            ax.text(last_x + text_offset, y_target, label,
+                    fontsize=16, color="black", va="center", ha="left")
+
+        # ---------------------------------------------------------
+        # Aesthetics
+        # ---------------------------------------------------------
+        ax.set_ylim(0, y_max)
+        ax.set_title(f"{role.capitalize()} Role Trends", fontsize=24, style="italic")
+
+        # X-axis formatting
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
+        ax.tick_params(axis="x", labelsize=16)
+
+        # Clean y-axis
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        ax.set_ylabel("Percentage (%)", fontsize=18)
+
+        plt.tight_layout()
+
+        if figure_export:
+            plt.savefig(figure_export, dpi=300, bbox_inches='tight', transparent=True)
+
+        plt.show()
+
+#%%
+    for role in ['hero', 'villain', 'victim']:
+        if role == 'hero':
+            top_n =7
+        elif role == 'villain':
+            top_n =3
+        else:
+            top_n =5
+        plot_single_role_trend(df_article, role=role, top_n=top_n,figure_export= Path(ROOT) / f"figures/{role}_trend.png", show_total_line=False)
+
+# %%
