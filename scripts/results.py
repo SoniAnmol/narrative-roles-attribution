@@ -345,7 +345,7 @@ if __name__ == "__main__":
     figure_export = Path(ROOT) / "figures/role_trends.png"
     plot_top_roles_trends(df_article, top_n=14, show_total_line=False, figure_export=figure_export)
 
-    # %% TODO Plot comparative roles with survey data
+    # %% Plot comparative roles with survey data
 
     # read survey data
     survey_data_path = Path(ROOT) / "data/survey_data/survey_data.csv"
@@ -409,125 +409,170 @@ if __name__ == "__main__":
     # Read the role count df
     role_counts = pd.read_excel(Path(ROOT)/ "data/survey_data/roles_comparisions.xlsx")
 
-#%% create dumbbell plots for each role
+    fig = plt.figure(figsize=(16, 24), dpi=300)
+    gs = gridspec.GridSpec(
+        3, 1,
+        height_ratios=[5, 2.75, 5.5],
+        hspace=0.25
+    )
 
-fig = plt.figure(figsize=(16, 18), dpi=300)
-gs = gridspec.GridSpec(
-    3, 1,
-    height_ratios=[4, 2, 1.5],   # adjust these numbers as you like
-    hspace=0.25
-)
+    role_to_ax = {
+        'hero': fig.add_subplot(gs[0, 0]),
+        'victim': fig.add_subplot(gs[1, 0]),
+        'villain': fig.add_subplot(gs[2, 0])
+    }
+    for role in ['hero', 'victim', 'villain']:
+        ax = role_to_ax[role]
+        df_role = role_counts[role_counts['role'] == role].copy()
+        
+        for source in df_role['source'].unique():
+            total = df_role.loc[df_role['source'] == source, 'count'].sum()
+            df_role.loc[df_role['source'] == source, 'pct_share'] = (
+                df_role.loc[df_role['source'] == source, 'count'] / total * 100
+            )
 
-role_to_ax = {
-    'hero': fig.add_subplot(gs[0, 0]),
-    'victim': fig.add_subplot(gs[1, 0]),
-    'villain': fig.add_subplot(gs[2, 0])
-}
+        df_plot = df_role.pivot(index='actor', columns='source', values='pct_share')
 
-# ---------------------------------------------------------
-# Your entire plotting loop (unchanged)
-# ---------------------------------------------------------
-for role in ['hero', 'victim', 'villain']:
+        df_plot = df_plot.rename(columns=str.lower)
 
-    ax = role_to_ax[role]  # <---- use subplot
-
-    df_role = role_counts[role_counts['role']==role].copy()
-
-    # compute pct_share per source
-    for source in df_role['source'].unique():
-        total = df_role.loc[df_role['source']==source, 'count'].sum()
-        df_role.loc[df_role['source']==source, 'pct_share'] = (
-            df_role.loc[df_role['source']==source, 'count'] / total * 100
+        actor_order = (
+            df_role.groupby("actor")["count"]
+            .sum()
+            .sort_values(ascending=True)
+            .index.tolist()
         )
 
-    # SORT BY NEWSPAPER BEFORE PIVOT
-    df_newspaper_sorted = (
-        df_role[df_role['source']=="newspaper"]
-        .sort_values("count", ascending=True)
+        # reindex df_plot to keep ALL actors
+        df_plot = df_plot.reindex(actor_order)
+
+        df_plot = df_plot.reset_index()
+        df_plot['actor'] = df_plot['actor'].astype(str)
+
+        # check which columns actually exist
+        has_survey = 'survey' in df_plot.columns
+        has_newspaper = 'newspaper' in df_plot.columns
+
+        for _, row in df_plot.iterrows():
+
+            actor = row['actor']
+            survey_val = row['survey'] if has_survey else np.nan
+            news_val   = row['newspaper'] if has_newspaper else np.nan
+
+            # Skip completely empty rows
+            if pd.isna(survey_val) and pd.isna(news_val):
+                continue
+
+            # Skip actors that only have newspaper data
+            if pd.isna(survey_val):
+                continue
+
+            if not pd.isna(survey_val) and not pd.isna(news_val):
+
+                # dumbbell line
+                ax.plot(
+                    [survey_val, news_val],
+                    [actor, actor],
+                    color='gray', linewidth=2, zorder=1
+                )
+
+                # dots
+                ax.scatter(survey_val, actor, color='blue', s=200, zorder=2)
+                ax.scatter(news_val, actor, color='orange', s=200, zorder=2)
+
+                # offsets
+                if survey_val > news_val:
+                    newspaper_text_offset = offset_copy(
+                        ax.transData, fig=ax.figure, x=-0.5, y=-0.075
+                    )
+                    survey_text_offset = offset_copy(
+                        ax.transData, fig=ax.figure, x=0.5, y=-0.075
+                    )
+                else:
+                    newspaper_text_offset = offset_copy(
+                        ax.transData, fig=ax.figure, x=0.5, y=-0.075
+                    )
+                    survey_text_offset = offset_copy(
+                        ax.transData, fig=ax.figure, x=-0.5, y=-0.075
+                    )
+
+                # labels
+                ax.text(
+                    survey_val, actor, f"{survey_val:.1f}%",
+                    color='#222222', fontsize=16, ha='center', va='bottom',
+                    transform=survey_text_offset
+                )
+                ax.text(
+                    news_val, actor, f"{news_val:.1f}%",
+                    color='#222222', fontsize=16, ha='center', va='bottom',
+                    transform=newspaper_text_offset
+                )
+
+                # diff annotation
+                diff_x = abs(survey_val - news_val)
+                if diff_x >= 10:
+                    mid_x = min(survey_val, news_val) + diff_x / 2
+                    ax.text(
+                        mid_x, actor, f"{diff_x:.1f}%",
+                        color='#222222', fontsize=10, ha='center', va='bottom',
+                        transform=offset_copy(ax.transData, fig=ax.figure, y=0.05)
+                    )
+
+
+            elif not pd.isna(survey_val):
+                ax.scatter(survey_val, actor, color='blue', s=200, zorder=2)
+                ax.text(
+                    survey_val, actor, f"{survey_val:.1f}%",
+                    color='#222222', fontsize=16, ha='center', va='bottom',
+                    transform=offset_copy(ax.transData, fig=ax.figure, x=0.5, y=-0.075)
+                )
+
+
+            ax.text(
+                -8, actor,
+                actor,
+                color='#222222', fontsize=16,
+                ha='right', va='center_baseline'
+            )
+
+            ax.hlines(
+                actor, xmin=-7.5, xmax=95,
+                color='#818589', linewidth=0.8, zorder=0,
+                transform=offset_copy(ax.transData, fig=ax.figure, y=-0.5)
+            )
+
+        ax.axvline(x=-7.5, color='#dddddd', linewidth=0.8)
+
+        ax.text(
+            0.5, 1.1,
+            f'{role.capitalize()} Role Comparison',
+            transform=ax.transAxes,
+            ha='center', va='bottom',
+            fontsize=18, fontweight='bold'
+        )
+
+        # ax.set_xlabel('Percentage Share (%)', fontsize=14)
+        ax.set_xlim(-7.5, 95)
+
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w', label='Survey',
+                markerfacecolor='blue', markersize=10),
+            Line2D([0], [0], marker='o', color='w', label='Newspaper',
+                markerfacecolor='orange', markersize=10)
+        ]
+        ax.legend(handles=legend_elements, loc='lower right', fontsize=14)
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.axis('off')
+
+    plt.tight_layout()
+    plt.savefig(
+        Path(ROOT) / "figures/all_roles_dumbbell.png",
+        dpi=300,
+        bbox_inches='tight',
+        transparent=True
     )
+    plt.show()
 
-    actor_order = df_newspaper_sorted["actor"].tolist()
 
-    # pivot
-    df_plot = (
-        df_role.pivot(index='actor', columns='source', values='pct_share')
-    )
-
-    df_plot = df_plot.rename(columns=str.lower)
-
-    actor_order_valid = [a for a in actor_order if a in df_plot.index]
-    df_plot = df_plot.loc[actor_order_valid]
-
-    df_plot = df_plot.reset_index()
-    df_plot['actor'] = df_plot['actor'].astype(str)
-
-    # --------------- per-row plotting (unchanged) ---------------
-    for _, row in df_plot.iterrows():
-
-        if pd.isna(row['survey']) or pd.isna(row['newspaper']):
-            continue
-
-        ax.plot([row['survey'], row['newspaper']], [row['actor'], row['actor']],
-                color='gray', linewidth=2, zorder=1)
-
-        ax.scatter(row['survey'], row['actor'], color='blue', s=200, zorder=2)
-        ax.scatter(row['newspaper'], row['actor'], color='orange', s=200, zorder=2)
-
-        if row['survey'] > row['newspaper']:
-            newspaper_text_offset = offset_copy(ax.transData, fig=ax.figure, x=-0.5, y=-0.07)
-            survey_text_offset   = offset_copy(ax.transData, fig=ax.figure, x=0.5, y=-0.07)
-        else:
-            newspaper_text_offset = offset_copy(ax.transData, fig=ax.figure, x=0.5, y=-0.07)
-            survey_text_offset   = offset_copy(ax.transData, fig=ax.figure, x=-0.5, y=-0.07)
-
-        ax.text(row['survey'], row['actor'], f"{row['survey']:.1f}%",
-                color='#222222', fontsize=14, ha='center', va='bottom',
-                transform=survey_text_offset)
-
-        ax.text(row['newspaper'], row['actor'], f"{row['newspaper']:.1f}%",
-                color='#222222', fontsize=14, ha='center', va='bottom',
-                transform=newspaper_text_offset)
-
-        diff_x = abs(row['survey'] - row['newspaper'])
-        if diff_x >= 10:
-            mid_x = min(row['survey'], row['newspaper']) + diff_x / 2
-            ax.text(mid_x, row['actor'], f"{diff_x:.1f}%",
-                    color='#222222', fontsize=10, ha='center', va='bottom',
-                    transform=offset_copy(ax.transData, fig=ax.figure, y=0.05))
-
-        ax.text(-8, row['actor'], row['actor'], color='#222222', fontsize=16,
-                ha='right', va='center_baseline')
-
-        ax.hlines(row['actor'], xmin=-7.5, xmax=95, color='#818589',
-                  linewidth=0.8, zorder=0,
-                  transform=offset_copy(ax.transData, fig=ax.figure, y=-0.5))
-
-    ax.axvline(x=-7.5, color='#dddddd', linewidth=0.8)
-    ax.text(
-        0.5, 1.1,                           # x=center, y=5% above plot
-        f'{role.capitalize()} Role Comparison',
-        transform=ax.transAxes,              # use Axes coordinates (0–1)
-        ha='center', va='bottom',
-        fontsize=18, fontweight='bold'
-    )    
-    ax.set_xlabel('Percentage Share (%)', fontsize=14)
-    ax.set_xlim(-7.5, 95)
-
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', label='Survey',
-               markerfacecolor='blue', markersize=10),
-        Line2D([0], [0], marker='o', color='w', label='Newspaper',
-               markerfacecolor='orange', markersize=10)
-    ]
-    ax.legend(handles=legend_elements, loc='lower right', fontsize=12)
-
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.axis('off')
-
-# final save
-plt.tight_layout()
-plt.savefig(Path(ROOT) / "figures/all_roles_dumbbell.png", dpi=300, bbox_inches='tight')
-plt.show()
-
-# %%
+    # %%
