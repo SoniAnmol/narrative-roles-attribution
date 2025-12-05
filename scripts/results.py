@@ -719,8 +719,7 @@ if __name__ == "__main__":
     # rename actor for clarity
     output.rename(columns={'region-hero':'regional government-hero',
                            'region-villain':'regional government-villain',
-                           'region-victim':'regional government-victim',
-                           'extreme event-villain':'natural disaster-villain'}, inplace=True)
+                           'region-victim':'regional government-victim',}, inplace=True)
 
     actor_role_cols = output.columns[output.columns.str.endswith(("-hero", "-villain", "-victim"))].tolist()
 
