@@ -650,7 +650,7 @@ def plot_top_roles_trends(
     # Figure layout
     # ----------------------------------------
     fig = plt.figure(figsize=(30, 20), dpi=300)
-    gs = gridspec.GridSpec(4, 1, height_ratios=[1, 5, 4.75, 4.75], hspace=0.03)
+    gs = gridspec.GridSpec(4, 1, height_ratios=[1, 5.25, 4.5, 4.5], hspace=0.03)
 
     ax0 = fig.add_subplot(gs[0])
     ax1 = fig.add_subplot(gs[1], sharex=ax0)
