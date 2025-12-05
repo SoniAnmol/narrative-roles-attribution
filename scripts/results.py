@@ -1,6 +1,7 @@
 # This script process the results and prepares it for creating visualizations
 
 # %% import libraries
+from math import e
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -11,18 +12,20 @@ import matplotlib.dates as mdates
 import matplotlib.patches as mpatches
 from matplotlib import axis, gridspec
 from matplotlib.transforms import offset_copy
+from responses import start
 
 
 # globals
 ROOT = Path(__file__).resolve().parent.parent
 
 # %% methods
-def plot_top_roles_trends(
+def plot_top_roles_trends(output,
     output_clean,
     top_n=12,
     flood_date="2023-05-01",
     show_total_line=True,
-    figure_export=None
+    figure_export=None,
+    add_stats_annotations=False
 ):
 
     # Identify role columns
@@ -42,8 +45,12 @@ def plot_top_roles_trends(
     df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
     monthly = df.groupby("month")[role_cols].sum().reset_index()
 
+    df_raw = output.copy()
+    df_raw["date"] = pd.to_datetime(df_raw["date"])
+    df_raw["month"] = df_raw["date"].dt.to_period("M").dt.to_timestamp()
+
     monthly_articles = (
-        df.groupby("month")["doc_id"]
+        df_raw.groupby("month")["doc_id"]
         .nunique()
         .reset_index()
         .rename(columns={"doc_id": "article_count"})
@@ -223,6 +230,14 @@ def plot_top_roles_trends(
 
             used_positions.append(y_target)
             text = col.split('-')[0]
+
+            if add_stats_annotations:
+                series = df[col]
+                start_val = series.iloc[0]
+                end_val   = series.iloc[-1]
+                average_val = series.mean()
+                text += f" (Start: {start_val:.1f}%, End: {end_val:.1f}%, Avg: {average_val:.1f}%)"
+
             ax.plot([last_x, last_x + box_offset], [y_start, y_target],
                     color="#666", linewidth=1.2, alpha=0.9)
 
@@ -240,6 +255,7 @@ def plot_top_roles_trends(
                     clip_on=False
                 )
             )
+
 
             ax.text(last_x + text_offset, y_target, text,
                     fontsize=16, color="black", va="center", ha="left")
@@ -304,7 +320,8 @@ if __name__ == "__main__":
     # rename actor for clarity
     output.rename(columns={'region-hero':'regional government-hero',
                            'region-villain':'regional government-villain',
-                           'region-victim':'regional government-victim'}, inplace=True)
+                           'region-victim':'regional government-victim',
+                           'extreme event-villain':'natural disaster-villain'}, inplace=True)
 
     actor_role_cols = output.columns[output.columns.str.endswith(("-hero", "-villain", "-victim"))].tolist()
 
@@ -344,7 +361,9 @@ if __name__ == "__main__":
 
     # %% Plot top role trends overtime
     figure_export = Path(ROOT) / "figures/role_trends.png"
-    plot_top_roles_trends(df_article, top_n=14, show_total_line=False, figure_export=figure_export)
+    plot_top_roles_trends(df_article, df_article, top_n=14, 
+                          show_total_line=False, figure_export=figure_export,
+                          add_stats_annotations=False)
 
     # %% Plot comparative roles with survey data
 
