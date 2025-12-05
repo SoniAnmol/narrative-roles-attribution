@@ -1,6 +1,7 @@
 # This script process the results and prepares it for creating visualizations
 
 # %% import libraries
+from calendar import c
 from math import e
 import pandas as pd
 import numpy as np
@@ -19,7 +20,290 @@ from responses import start
 ROOT = Path(__file__).resolve().parent.parent
 
 # %% methods
-def plot_top_roles_trends(output,
+# def plot_top_roles_trends(output,
+#     output_clean,
+#     top_n=12,
+#     flood_date="2023-05-01",
+#     show_total_line=True,
+#     figure_export=None,
+#     add_stats_annotations=False
+# ):
+
+#     # Identify role columns
+#     role_cols = [
+#         c for c in output_clean.columns
+#         if (c.endswith("-hero") or c.endswith("-villain") or c.endswith("-victim"))
+#         and not c.endswith("_prob")
+#     ]
+
+#     hero_cols_all = [c for c in role_cols if c.endswith("-hero")]
+#     villain_cols_all = [c for c in role_cols if c.endswith("-villain")]
+#     victim_cols_all = [c for c in role_cols if c.endswith("-victim")]
+
+#     # Monthly aggregation
+#     df = output_clean.copy()
+#     df["date"] = pd.to_datetime(df["date"])
+#     df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
+#     monthly = df.groupby("month")[role_cols].sum().reset_index()
+
+#     df_raw = output.copy()
+#     df_raw["date"] = pd.to_datetime(df_raw["date"])
+#     df_raw["month"] = df_raw["date"].dt.to_period("M").dt.to_timestamp()
+
+#     monthly_articles = (
+#         df_raw.groupby("month")["doc_id"]
+#         .nunique()
+#         .reset_index()
+#         .rename(columns={"doc_id": "article_count"})
+#     )
+
+#     # Global top-N roles
+#     global_counts = monthly[role_cols].sum().sort_values(ascending=False)
+#     top_roles = global_counts.head(top_n).index.tolist()
+
+#     top_heroes = [c for c in top_roles if c in hero_cols_all]
+#     top_villains = [c for c in top_roles if c in villain_cols_all]
+#     top_victims = [c for c in top_roles if c in victim_cols_all]
+
+#     # Normalize to percentages
+#     monthly["global_total"] = monthly[role_cols].sum(axis=1)
+#     pct = monthly.copy()
+#     for col in role_cols:
+#         pct[col] = (pct[col] / pct["global_total"]) * 100
+
+#     # Colors
+#     def get_palette(n, cmap_name, minimum=0.35, maximum=1.0):
+#         base = cm.get_cmap(cmap_name)
+#         vals = np.linspace(minimum, maximum, n)   
+#         colors = [base(v) for v in vals]
+#         return colors[::-1]
+
+#     hero_colors = get_palette(len(top_heroes), "Greens")
+#     villain_colors = get_palette(len(top_villains), "Purples")
+#     victim_colors = get_palette(len(top_victims), "Blues")
+
+#     # ARTICLE COUNTS
+#     def plot_article_counts(ax, df_articles):
+
+#         # Line plot
+#         ax.plot(
+#             df_articles["month"],
+#             df_articles["article_count"],
+#             color="black",
+#             linewidth=2.5,
+#             marker="o",
+#         )
+
+#         # Annotate each month
+#         for x, y in zip(df_articles["month"], df_articles["article_count"]):
+#             ax.text(
+#                 x,
+#                 y + 1,
+#                 str(y),
+#                 fontsize=16,
+#                 color="black",
+#                 ha="center",
+#                 va="bottom"
+#             )
+
+#         # Flood lines (same as other subplots)
+#         flood_dt = pd.Timestamp(flood_date)
+#         ax.axvline(flood_dt, color="red", linestyle="--", linewidth=1.3)
+#         ax.text(pd.Timestamp("2023-05-01"),  df_articles["article_count"].max()+100, "Floods",
+#                 color="red", fontsize=16, ha="center")
+        
+#         # No y-axis tick labels
+#         ax.set_yticks([])
+#         for spine in ax.spines.values():
+#             spine.set_visible(False)
+
+#         ax.set_title("Article Count Per Month", fontsize=20, style="italic")
+
+#     # ROLE STACKED PLOTS (unchanged except for ytick spacing fix)
+#     def plot_layered(ax, df, cols, colors, title, tick_start):
+
+#         if len(cols) == 0:
+#             ax.set_title(title + " (no top roles)")
+#             return
+
+#         cols_sorted = df[cols].sum().sort_values(ascending=False).index.tolist()
+#         col_color = dict(zip(cols_sorted, colors))
+
+#         # Compute stacked areas
+#         stacked_bottom = {}
+#         stacked_top = {}
+
+#         cumulative = np.zeros(len(df), dtype=float)
+#         for col in cols_sorted:
+#             bottom = cumulative.copy()
+#             top = bottom + df[col].values
+#             stacked_bottom[col] = bottom
+#             stacked_top[col] = top
+#             cumulative = top
+
+#         row_sums = df[cols_sorted].sum(axis=1)
+#         local_max = row_sums.max()
+#         y_max = local_max * 1.05
+#         ax.set_ylim(0, y_max)
+
+#         # Stacked layers
+#         layer_alpha = 0.75
+#         for col in cols_sorted:
+#             color = col_color[col]
+#             ax.fill_between(
+#                 df["month"],
+#                 stacked_bottom[col],
+#                 stacked_top[col],
+#                 alpha=layer_alpha,
+#                 color=color,
+#                 edgecolor=color,
+#                 linewidth=1.4
+#             )   
+#             ax.plot(
+#                 df["month"],
+#                 stacked_top[col],
+#                 color="white",
+#                 linewidth=1.5,
+#                 alpha=0.9,
+#             )
+
+
+#         # Total line
+#         if show_total_line:
+#             ax.plot(df["month"], row_sums, color="black", linewidth=2.4, marker="o")
+
+#         # Flood lines
+#         flood_dt = pd.Timestamp(flood_date)
+#         ax.axvline(flood_dt, color="red", linestyle="--", linewidth=1.3)
+#         # ax.text(pd.Timestamp("2023-05-01"), y_max * 0.99, "Floods",
+#                 # color="red", fontsize=16, ha="center")
+
+#         # Clean y-axis
+#         for spine in ax.spines.values():
+#             spine.set_visible(False)
+
+#         # Custom y-ticks
+#         yticks = np.arange(0, y_max, 10)
+#         labels_full = [f"{tick_start + i * 10}%" for i in range(len(yticks))]
+#         labels_sparse = [""] * len(labels_full)
+#         labels_sparse[:4] = labels_full[:4]
+
+#         ax.set_yticks(yticks)
+#         ax.set_yticklabels(labels_sparse, fontsize=16, color="#555")
+#         ax.tick_params(axis="y", pad=2)
+#         for tick in ax.get_yticklabels():
+#             tick.set_x(0.04)
+
+#         # White gridlines
+#         for y in yticks:
+#             ax.hlines(y, df["month"].min(), df["month"].max(),
+#                       colors="white", linestyles=":", linewidth=0.7, alpha=0.4)
+
+#         ax.grid(which="major", color="#ffffff", alpha=0.98, linestyle=':')
+
+#         # Right-side labels
+#         band_mid_last = {}
+#         for col in cols_sorted:
+#             band_mid_last[col] = (
+#                 stacked_bottom[col][-1] + stacked_top[col][-1]
+#             ) / 2
+
+#         connector_order = sorted(cols_sorted,
+#                                  key=lambda c: band_mid_last[c],
+#                                  reverse=True)
+
+#         last_x = df["month"].max()
+#         box_offset = pd.Timedelta(days=3)
+#         text_offset = pd.Timedelta(days=6)
+
+#         used_positions = []
+#         min_gap = 1.2
+
+#         for col in connector_order:
+#             color = col_color[col]
+
+#             y_start = band_mid_last[col]
+#             y_target = y_start
+
+#             for used in used_positions:
+#                 if abs(y_target - used) < min_gap:
+#                     y_target = used - min_gap
+
+#             used_positions.append(y_target)
+#             text = col.split('-')[0]
+
+#             if add_stats_annotations:
+#                 series = df[col]
+#                 start_val = series.iloc[0]
+#                 end_val   = series.iloc[-1]
+#                 average_val = series.mean()
+#                 text += f" (Start: {start_val:.1f}%, End: {end_val:.1f}%, Avg: {average_val:.1f}%)"
+
+#             ax.plot([last_x, last_x + box_offset], [y_start, y_target],
+#                     color="#666", linewidth=1.2, alpha=0.9)
+
+#             square_size = 1
+#             ax.add_patch(
+#                 mpatches.Rectangle(
+#                     (last_x + box_offset, y_target - square_size/2),
+#                     width=pd.Timedelta(days=2), # pyright: ignore[reportArgumentType]
+#                     height=square_size,
+#                     facecolor=color,
+#                     edgecolor="#555",
+#                     linewidth=1.0,
+#                     alpha=layer_alpha,
+#                     transform=ax.transData,
+#                     clip_on=False
+#                 )
+#             )
+
+
+#             ax.text(last_x + text_offset, y_target, text,
+#                     fontsize=16, color="black", va="center", ha="left")
+
+#         ax.set_title(title, fontsize=20, pad=2.5, style="italic", y=0.95)
+
+#     # Final Figure 
+#     fig = plt.figure(figsize=(30, 24), dpi=300)
+#     gs = gridspec.GridSpec(
+#         4, 1,
+#         height_ratios=[0.3, 1, 1, 1],
+#         hspace=0.03
+#     )
+
+#     ax0 = fig.add_subplot(gs[0])
+
+#     # Then others can share x with ax0
+#     ax1 = fig.add_subplot(gs[1], sharex=ax0)
+#     ax2 = fig.add_subplot(gs[2], sharex=ax0)
+#     ax3 = fig.add_subplot(gs[3], sharex=ax0)
+
+#     axes = [ax0, ax1, ax2, ax3]
+
+#     # First subplot: article count
+#     plot_article_counts(ax0, monthly_articles)
+
+#     # Stacked narrative roles
+#     plot_layered(ax1, pct, top_heroes, hero_colors,    "Heroes",   tick_start=60)
+#     plot_layered(ax2, pct, top_villains, villain_colors, "Villains", tick_start=30)
+#     plot_layered(ax3, pct, top_victims,  victim_colors,  "Victims",  tick_start=0)
+
+#     for ax in axes:
+#         ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+#         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
+#         ax.tick_params(axis="x", labelsize=16)
+#     for ax in axes[:-1]:
+#         ax.tick_params(axis="x", labelbottom=False)
+
+#     plt.tight_layout()
+#     if figure_export:
+#         plt.savefig(figure_export, dpi=300, bbox_inches='tight',
+#         transparent=True)
+#     plt.show()
+
+
+def plot_top_roles_trends(
+    output,
     output_clean,
     top_n=12,
     flood_date="2023-05-01",
@@ -28,7 +312,9 @@ def plot_top_roles_trends(output,
     add_stats_annotations=False
 ):
 
+    # ----------------------------------------
     # Identify role columns
+    # ----------------------------------------
     role_cols = [
         c for c in output_clean.columns
         if (c.endswith("-hero") or c.endswith("-villain") or c.endswith("-victim"))
@@ -39,7 +325,9 @@ def plot_top_roles_trends(output,
     villain_cols_all = [c for c in role_cols if c.endswith("-villain")]
     victim_cols_all = [c for c in role_cols if c.endswith("-victim")]
 
+    # ----------------------------------------
     # Monthly aggregation
+    # ----------------------------------------
     df = output_clean.copy()
     df["date"] = pd.to_datetime(df["date"])
     df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
@@ -56,7 +344,9 @@ def plot_top_roles_trends(output,
         .rename(columns={"doc_id": "article_count"})
     )
 
-    # Global top-N roles
+    # ----------------------------------------
+    # Find global top-N roles
+    # ----------------------------------------
     global_counts = monthly[role_cols].sum().sort_values(ascending=False)
     top_roles = global_counts.head(top_n).index.tolist()
 
@@ -64,16 +354,20 @@ def plot_top_roles_trends(output,
     top_villains = [c for c in top_roles if c in villain_cols_all]
     top_victims = [c for c in top_roles if c in victim_cols_all]
 
+    # ----------------------------------------
     # Normalize to percentages
+    # ----------------------------------------
     monthly["global_total"] = monthly[role_cols].sum(axis=1)
     pct = monthly.copy()
     for col in role_cols:
         pct[col] = (pct[col] / pct["global_total"]) * 100
 
+    # ----------------------------------------
     # Colors
+    # ----------------------------------------
     def get_palette(n, cmap_name, minimum=0.35, maximum=1.0):
         base = cm.get_cmap(cmap_name)
-        vals = np.linspace(minimum, maximum, n)   
+        vals = np.linspace(minimum, maximum, n)
         colors = [base(v) for v in vals]
         return colors[::-1]
 
@@ -81,58 +375,77 @@ def plot_top_roles_trends(output,
     villain_colors = get_palette(len(top_villains), "Purples")
     victim_colors = get_palette(len(top_victims), "Blues")
 
-    # ARTICLE COUNTS
+    # ----------------------------------------
+    # Article count subplot
+    # ----------------------------------------
     def plot_article_counts(ax, df_articles):
-
-        # Line plot
         ax.plot(
             df_articles["month"],
             df_articles["article_count"],
             color="black",
             linewidth=2.5,
-            marker="o",
+            marker="o"
         )
 
-        # Annotate each month
         for x, y in zip(df_articles["month"], df_articles["article_count"]):
             ax.text(
-                x,
-                y + 1,
-                str(y),
-                fontsize=16,
-                color="black",
-                ha="center",
-                va="bottom"
+                x, y + 1.5, str(y), fontsize=18,
+                color="black", ha="center", va="bottom"
             )
 
-        # Flood lines (same as other subplots)
         flood_dt = pd.Timestamp(flood_date)
         ax.axvline(flood_dt, color="red", linestyle="--", linewidth=1.3)
-        ax.text(pd.Timestamp("2023-05-01"),  df_articles["article_count"].max()+100, "Floods",
-                color="red", fontsize=16, ha="center")
-        
-        # No y-axis tick labels
+        ax.text(
+            flood_dt, df_articles["article_count"].max() + 250,
+            "Floods", fontsize=20, color="red", ha="center"
+        )
+
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(False)
 
-        ax.set_title("Article Count Per Month", fontsize=20, style="italic")
+        ax.set_title("Article Count Per Month", fontsize=22, style="italic")
 
-    # ROLE STACKED PLOTS (unchanged except for ytick spacing fix)
-    def plot_layered(ax, df, cols, colors, title, tick_start):
+    # ----------------------------------------
+    # Layered stacked subplot with smart y-limits
+    # ----------------------------------------
+    def plot_layered(
+        ax, df, cols, colors, title,
+        base=None, band=None,
+        show_total_line=True,
+        add_stats_annotations=False
+    ):
+        """
+        df: pct dataframe
+        cols: role columns for this band
+        base: baseline array (size=months)
+        band: (low, high) background highlight band
+        """
 
         if len(cols) == 0:
-            ax.set_title(title + " (no top roles)")
+            ax.set_title(title + " (no roles)")
+            ax.set_ylim(0, 100)
             return
 
+        # baseline
+        if base is None:
+            base = np.zeros(len(df), dtype=float)
+        else:
+            base = np.asarray(base)
+
+        # highlight band background
+        if band is not None:
+            ax.axhspan(band[0], band[1], facecolor="#ffffff", alpha=0.8, zorder=0)
+
+        # Sort roles by total
         cols_sorted = df[cols].sum().sort_values(ascending=False).index.tolist()
         col_color = dict(zip(cols_sorted, colors))
 
-        # Compute stacked areas
+        # Compute stacking
         stacked_bottom = {}
         stacked_top = {}
+        cumulative = base.copy()
 
-        cumulative = np.zeros(len(df), dtype=float)
         for col in cols_sorted:
             bottom = cumulative.copy()
             top = bottom + df[col].values
@@ -140,115 +453,169 @@ def plot_top_roles_trends(output,
             stacked_top[col] = top
             cumulative = top
 
-        row_sums = df[cols_sorted].sum(axis=1)
-        local_max = row_sums.max()
-        y_max = local_max * 1.05
-        ax.set_ylim(0, y_max)
+        total_curve = cumulative
 
-        # Stacked layers
+        # -------------------------------------
+        # SMART Y-LIMIT LOGIC
+        # -------------------------------------
+        band_min = base.min()
+        band_max = total_curve.max()
+        padding = max((band_max - band_min) * 0.08, 0.75)
+
+        ymin = band_min - padding
+        ymax = band_max + padding
+
+        ax.set_ylim(ymin, ymax)
+
+        # Draw stacked layers
         layer_alpha = 0.75
         for col in cols_sorted:
             color = col_color[col]
+
             ax.fill_between(
                 df["month"],
                 stacked_bottom[col],
                 stacked_top[col],
-                alpha=layer_alpha,
                 color=color,
+                alpha=layer_alpha,
                 edgecolor=color,
                 linewidth=1.4
-            )   
+            )
+
             ax.plot(
                 df["month"],
                 stacked_top[col],
                 color="white",
                 linewidth=1.5,
-                alpha=0.9,
+                alpha=0.9
             )
-
 
         # Total line
         if show_total_line:
-            ax.plot(df["month"], row_sums, color="black", linewidth=2.4, marker="o")
+            ax.plot(
+                df["month"], total_curve,
+                color="black", linewidth=2.4, marker="o"
+            )
 
-        # Flood lines
+        # Flood line
         flood_dt = pd.Timestamp(flood_date)
         ax.axvline(flood_dt, color="red", linestyle="--", linewidth=1.3)
-        # ax.text(pd.Timestamp("2023-05-01"), y_max * 0.99, "Floods",
-                # color="red", fontsize=16, ha="center")
 
-        # Clean y-axis
+        # Clean axis
         for spine in ax.spines.values():
             spine.set_visible(False)
 
-        # Custom y-ticks
-        yticks = np.arange(0, y_max, 10)
-        labels_full = [f"{tick_start + i * 10}%" for i in range(len(yticks))]
-        labels_sparse = [""] * len(labels_full)
-        labels_sparse[:4] = labels_full[:4]
+        # ----------------------------------------
+        # BAND-SPECIFIC Y-TICK LABELING
+        # ----------------------------------------
+        yticks = np.arange(int(ymin)//10 * 10, int(ymax)//10 * 10 + 20, 10)
+        labels = []
+
+        if band is not None:
+            band_low, band_high = band
+        else:
+            band_low, band_high = ymin, ymax
+
+        for y in yticks:
+            if band_low <= y <= band_high:
+                labels.append(f"{y}%")
+            else:
+                labels.append("")
 
         ax.set_yticks(yticks)
-        ax.set_yticklabels(labels_sparse, fontsize=16, color="#555")
-        ax.tick_params(axis="y", pad=2)
-        for tick in ax.get_yticklabels():
-            tick.set_x(0.04)
+        ax.tick_params(axis="y", color="#fff")
+        ax.set_yticklabels(labels, fontsize=20, color="#444", x=0.04)
 
-        # White gridlines
+        # ----------------------------------------
+        # WHITE GRIDLINES
+        # ----------------------------------------
         for y in yticks:
-            ax.hlines(y, df["month"].min(), df["month"].max(),
-                      colors="white", linestyles=":", linewidth=0.7, alpha=0.4)
+            ax.hlines(
+                y,
+                df["month"].min(),
+                df["month"].max(),
+                colors="white",
+                linestyles=":",
+                linewidth=0.8,
+                alpha=0.6
+            )
 
-        ax.grid(which="major", color="#ffffff", alpha=0.98, linestyle=':')
+        for x in df["month"]:
+            ax.vlines(
+                x,
+                ymin,
+                ymax,
+                colors="white",
+                linestyles=":",
+                linewidth=0.6,
+                alpha=0.5
+            )
 
-        # Right-side labels
-        band_mid_last = {}
-        for col in cols_sorted:
-            band_mid_last[col] = (
-                stacked_bottom[col][-1] + stacked_top[col][-1]
-            ) / 2
+        # ----------------------------------------
+        # RIGHT-SIDE LABELS — ROBUST NON-OVERLAPPING
+        # ----------------------------------------
+        band_mid_last = {
+            col: (stacked_bottom[col][-1] + stacked_top[col][-1]) / 2
+            for col in cols_sorted
+        }
+        order = sorted(cols_sorted, key=lambda c: band_mid_last[c], reverse=True)
 
-        connector_order = sorted(cols_sorted,
-                                 key=lambda c: band_mid_last[c],
-                                 reverse=True)
+        # compute desired positions
+        desired_positions = [band_mid_last[col] for col in order]
+        desired_positions = sorted(desired_positions, reverse=True)
 
+        # enforce minimum spacing
+        min_gap = 5
+        label_positions = []
+
+        for pos in desired_positions:
+            if not label_positions:
+                label_positions.append(pos)
+                continue
+
+            last = label_positions[-1]
+            if last - pos < min_gap:
+                pos = last - min_gap
+
+            # keep labels within axis limits
+            pos = max(pos, ymin + min_gap)
+
+            label_positions.append(pos)
+
+        # map back to columns
+        final_positions = dict(zip(order, label_positions))
+
+        # render labels
         last_x = df["month"].max()
         box_offset = pd.Timedelta(days=3)
         text_offset = pd.Timedelta(days=6)
 
-        used_positions = []
-        min_gap = 1.2
-
-        for col in connector_order:
+        for col in order:
             color = col_color[col]
+            y_target = final_positions[col]
 
-            y_start = band_mid_last[col]
-            y_target = y_start
-
-            for used in used_positions:
-                if abs(y_target - used) < min_gap:
-                    y_target = used - min_gap
-
-            used_positions.append(y_target)
-            text = col.split('-')[0]
+            label = col.split("-")[0]
 
             if add_stats_annotations:
-                series = df[col]
-                start_val = series.iloc[0]
-                end_val   = series.iloc[-1]
-                average_val = series.mean()
-                text += f" (Start: {start_val:.1f}%, End: {end_val:.1f}%, Avg: {average_val:.1f}%)"
+                s = df[col]
+                label += f" (Start: {s.iloc[0]:.1f}%, End: {s.iloc[-1]:.1f}%, Avg: {s.mean():.1f}%)"
 
-            ax.plot([last_x, last_x + box_offset], [y_start, y_target],
-                    color="#666", linewidth=1.2, alpha=0.9)
+            # connector line
+            y_start = band_mid_last[col]
+            ax.plot(
+                [last_x, last_x + box_offset],
+                [y_start, y_target],
+                color="#555", linewidth=1.2, alpha=0.9
+            )
 
-            square_size = 1
+            # color box
             ax.add_patch(
                 mpatches.Rectangle(
-                    (last_x + box_offset, y_target - square_size/2),
-                    width=pd.Timedelta(days=2), # pyright: ignore[reportArgumentType]
-                    height=square_size,
+                    (last_x + box_offset, y_target - 0.5),
+                    width=pd.Timedelta(days=2),
+                    height=1,
                     facecolor=color,
-                    edgecolor="#555",
+                    edgecolor="#333",
                     linewidth=1.0,
                     alpha=layer_alpha,
                     transform=ax.transData,
@@ -256,49 +623,81 @@ def plot_top_roles_trends(output,
                 )
             )
 
+            # text label
+            ax.text(
+                last_x + text_offset,
+                y_target,
+                label,
+                fontsize=20,
+                color="black",
+                va="center",
+                ha="left"
+            )
 
-            ax.text(last_x + text_offset, y_target, text,
-                    fontsize=16, color="black", va="center", ha="left")
+        ax.set_title(title, fontsize=22, style="italic", y=0.9, pad=2.5)
 
-        ax.set_title(title, fontsize=20, pad=2.5, style="italic", y=0.95)
+    # ----------------------------------------
+    # BASELINES FOR EACH SUBPLOT
+    # ----------------------------------------
+    victim_total = pct[top_victims].sum(axis=1) if len(top_victims) else pd.Series(0, index=pct.index)
+    villain_total = pct[top_villains].sum(axis=1) if len(top_villains) else pd.Series(0, index=pct.index)
 
-    # Final Figure 
-    fig = plt.figure(figsize=(30, 24), dpi=300)
-    gs = gridspec.GridSpec(
-        4, 1,
-        height_ratios=[0.3, 1, 1, 1],
-        hspace=0.03
-    )
+    base_victims = np.zeros(len(pct))
+    base_villains = victim_total.values
+    base_heroes  = (victim_total + villain_total).values
+
+    # ----------------------------------------
+    # Figure layout
+    # ----------------------------------------
+    fig = plt.figure(figsize=(30, 20), dpi=300)
+    gs = gridspec.GridSpec(4, 1, height_ratios=[1, 5, 4.75, 4.75], hspace=0.03)
 
     ax0 = fig.add_subplot(gs[0])
-
-    # Then others can share x with ax0
     ax1 = fig.add_subplot(gs[1], sharex=ax0)
     ax2 = fig.add_subplot(gs[2], sharex=ax0)
     ax3 = fig.add_subplot(gs[3], sharex=ax0)
 
-    axes = [ax0, ax1, ax2, ax3]
-
-    # First subplot: article count
+    # Article count subplot
     plot_article_counts(ax0, monthly_articles)
 
-    # Stacked narrative roles
-    plot_layered(ax1, pct, top_heroes, hero_colors,    "Heroes",   tick_start=60)
-    plot_layered(ax2, pct, top_villains, villain_colors, "Villains", tick_start=30)
-    plot_layered(ax3, pct, top_victims,  victim_colors,  "Victims",  tick_start=0)
+    # Final stacked plots
+    plot_layered(ax1, pct, top_heroes, hero_colors, "Heroes",
+                 base=base_heroes, band=(60, 100),
+                 show_total_line=show_total_line,
+                 add_stats_annotations=add_stats_annotations)
 
-    for ax in axes:
+    plot_layered(ax2, pct, top_villains, villain_colors, "Villains",
+                 base=base_villains, band=(30, 60),
+                 show_total_line=show_total_line,
+                 add_stats_annotations=add_stats_annotations)
+
+    plot_layered(ax3, pct, top_victims, victim_colors, "Victims",
+                 base=base_victims, band=(0, 30),
+                 show_total_line=show_total_line,
+                 add_stats_annotations=add_stats_annotations)
+
+    # Shared x-axis formatting
+    for ax in [ax0, ax1, ax2, ax3]:
         ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
-        ax.tick_params(axis="x", labelsize=16)
-    for ax in axes[:-1]:
-        ax.tick_params(axis="x", labelbottom=False)
+        # move x-tick labels upward
+        ax.tick_params(axis="x", labelsize=20, pad=0, color="#ffffff")
+
+    for ax in [ax0, ax1, ax2]:
+        ax.tick_params(axis="x", labelbottom=False, color="#ffffff")
 
     plt.tight_layout()
+
     if figure_export:
-        plt.savefig(figure_export, dpi=300, bbox_inches='tight',
-        transparent=True)
+        plt.savefig(
+            figure_export,
+            dpi=300,
+            bbox_inches="tight",
+            transparent=True
+        )
+
     plt.show()
+
 
 
 # %% main
@@ -364,6 +763,11 @@ if __name__ == "__main__":
     plot_top_roles_trends(df_article, df_article, top_n=14, 
                           show_total_line=False, figure_export=figure_export,
                           add_stats_annotations=False)
+    
+    figure_export = Path(ROOT) / "figures/role_trends_detailed.png"
+    plot_top_roles_trends(df_article, df_article, top_n=14, 
+                          show_total_line=False, figure_export=figure_export,
+                          add_stats_annotations=True)
 
     # %% Plot comparative roles with survey data
 
