@@ -832,19 +832,19 @@ if __name__ == "__main__":
     # Read the role count df
     role_counts = pd.read_excel(Path(ROOT)/ "data/survey_data/roles_comparisions.xlsx")
 
-    fig = plt.figure(figsize=(16, 24), dpi=300)
+    fig = plt.figure(figsize=(12, 24), dpi=300)
     gs = gridspec.GridSpec(
         3, 1,
-        height_ratios=[5, 2.75, 5.5],
+        height_ratios=[2.75, 5.5, 5],
         hspace=0.25
     )
 
     role_to_ax = {
-        'hero': fig.add_subplot(gs[0, 0]),
-        'victim': fig.add_subplot(gs[1, 0]),
-        'villain': fig.add_subplot(gs[2, 0])
+        'victim': fig.add_subplot(gs[0, 0]),
+        'villain': fig.add_subplot(gs[1, 0]),
+        'hero': fig.add_subplot(gs[2, 0])
     }
-    for role in ['hero', 'victim', 'villain']:
+    for role in ['victim', 'villain', 'hero']:
         ax = role_to_ax[role]
         df_role = role_counts[role_counts['role'] == role].copy()
         
@@ -951,19 +951,19 @@ if __name__ == "__main__":
 
 
             ax.text(
-                -8, actor,
+                -12, actor,
                 actor,
                 color='#222222', fontsize=16,
                 ha='right', va='center_baseline'
             )
 
             ax.hlines(
-                actor, xmin=-7.5, xmax=95,
+                actor, xmin=-9, xmax=95,
                 color='#818589', linewidth=0.8, zorder=0,
                 transform=offset_copy(ax.transData, fig=ax.figure, y=-0.5)
             )
 
-        ax.axvline(x=-7.5, color='#dddddd', linewidth=0.8)
+        ax.axvline(x=-9, color='#dddddd', linewidth=0.8)
 
         ax.text(
             0.5, 1.1,
@@ -974,7 +974,7 @@ if __name__ == "__main__":
         )
 
         # ax.set_xlabel('Percentage Share (%)', fontsize=14)
-        ax.set_xlim(-7.5, 95)
+        ax.set_xlim(-9, 95)
 
         legend_elements = [
             Line2D([0], [0], marker='o', color='w', label='Survey',
