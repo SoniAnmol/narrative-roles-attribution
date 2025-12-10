@@ -107,52 +107,52 @@ def translate(text, source_lang=None, target_lang="en"):
 
 
 # def remove_similar_texts(df, text_column="text", date_column="date", similarity_threshold=0.90):
-    """
-    Remove duplicate or highly similar texts based on embedding similarity and date matching.
-    If date is NaN, drops duplicate texts based on the text column only.
+    # """
+    # Remove duplicate or highly similar texts based on embedding similarity and date matching.
+    # If date is NaN, drops duplicate texts based on the text column only.
 
-    Parameters:
-        df (pd.DataFrame): DataFrame containing the data.
-        text_column (str): The name of the column with text data.
-        date_column (str): The name of the column with date data.
-        similarity_threshold (float): Threshold for cosine similarity to consider texts as duplicates.
+    # Parameters:
+    #     df (pd.DataFrame): DataFrame containing the data.
+    #     text_column (str): The name of the column with text data.
+    #     date_column (str): The name of the column with date data.
+    #     similarity_threshold (float): Threshold for cosine similarity to consider texts as duplicates.
 
-    Returns:
-        pd.DataFrame: Cleaned DataFrame with similar texts removed.
-    """
-    # Load the embedding model
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    # Returns:
+    #     pd.DataFrame: Cleaned DataFrame with similar texts removed.
+    # """
+    # # Load the embedding model
+    # model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    # Generate embeddings for all text entries
-    embeddings = model.encode(df[text_column].tolist(), convert_to_tensor=True)
+    # # Generate embeddings for all text entries
+    # embeddings = model.encode(df[text_column].tolist(), convert_to_tensor=True)
 
-    # Calculate pairwise similarity matrix
-    similarity_matrix = util.cos_sim(embeddings, embeddings).numpy()
+    # # Calculate pairwise similarity matrix
+    # similarity_matrix = util.cos_sim(embeddings, embeddings).numpy()
 
-    # Set to keep track of indices to drop
-    to_drop = set()
+    # # Set to keep track of indices to drop
+    # to_drop = set()
 
-    # Loop through the similarity matrix to find duplicates
-    for i in range(len(df)):
-        for j in range(i + 1, len(df)):
-            # Check if similarity exceeds threshold
-            if similarity_matrix[i][j] >= similarity_threshold:
-                # Check if the date is NaN for both entries
-                if pd.isna(df[date_column][i]) and pd.isna(df[date_column][j]):
-                    # Mark duplicate based on text only, keeping the first occurrence
-                    if j not in to_drop:
-                        to_drop.add(j)
-                elif df[date_column][i] == df[date_column][j]:
-                    # Compare word counts and mark the shorter text for dropping
-                    if len(df[text_column][i].split()) < len(df[text_column][j].split()):
-                        to_drop.add(i)
-                    else:
-                        to_drop.add(j)
+    # # Loop through the similarity matrix to find duplicates
+    # for i in range(len(df)):
+    #     for j in range(i + 1, len(df)):
+    #         # Check if similarity exceeds threshold
+    #         if similarity_matrix[i][j] >= similarity_threshold:
+    #             # Check if the date is NaN for both entries
+    #             if pd.isna(df[date_column][i]) and pd.isna(df[date_column][j]):
+    #                 # Mark duplicate based on text only, keeping the first occurrence
+    #                 if j not in to_drop:
+    #                     to_drop.add(j)
+    #             elif df[date_column][i] == df[date_column][j]:
+    #                 # Compare word counts and mark the shorter text for dropping
+    #                 if len(df[text_column][i].split()) < len(df[text_column][j].split()):
+    #                     to_drop.add(i)
+    #                 else:
+    #                     to_drop.add(j)
 
-    # Drop entries with identified indices
-    df_cleaned = df.drop(to_drop).reset_index(drop=True)
+    # # Drop entries with identified indices
+    # df_cleaned = df.drop(to_drop).reset_index(drop=True)
 
-    return df_cleaned
+    # return df_cleaned
 
 def remove_similar_texts(
     df, 
@@ -377,7 +377,7 @@ if __name__ == "__main__":
     df["publisher"] = df["publisher"].apply(lambda x: re.sub(r"[^a-zA-Z\s]", "", x))  # Remove special characters
     df["publisher"] = df["publisher"].str.lower().str.strip()  # Convert to lowercase and strip the white space
 
-    #%% drop the articles with less than 20 words
+    #%% drop the articles with less than 30 words
     df = df[df["text"].str.split().str.len() >= 30].reset_index(drop=True)
 
     # %%
@@ -616,7 +616,7 @@ if __name__ == "__main__":
 
     # ============================================================
     # OTHER / UNCATEGORIZED
-    # ============================================================
+
     "metro": "other",
     "elle": "other",
     "vita": "other",
