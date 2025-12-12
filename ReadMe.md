@@ -52,3 +52,4 @@ pynpf
 - Residents, particularly from floods affected commmunes more frequently attributed floods to climate change.
 - Attribution to climate change correlated with pro-environmental behavioral shifts.
 
+![NarrativeRolesEvaluation](figures/roles_trends_evolution.gif)
