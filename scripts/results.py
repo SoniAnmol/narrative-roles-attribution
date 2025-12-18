@@ -13,6 +13,8 @@ import matplotlib.dates as mdates
 import matplotlib.patches as mpatches
 from matplotlib import axis, gridspec
 from matplotlib.transforms import offset_copy
+import imageio
+import os
 # from responses import start
 
 
@@ -62,6 +64,18 @@ def plot_top_roles_trends(
         .reset_index()
         .rename(columns={"doc_id": "article_count"})
     )
+
+    # Remove roles that never appear in this subset
+    role_cols_nonzero = [c for c in role_cols if monthly[c].sum() > 0]
+
+    if len(role_cols_nonzero) == 0:
+        # Early exit: no roles yet in this animation frame
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.text(0.5, 0.5, "No role data yet", ha="center", va="center", fontsize=20)
+        fig.savefig(figure_export, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return
+
 
     # ----------------------------------------
     # Find global top-N roles
@@ -143,7 +157,11 @@ def plot_top_roles_trends(
 
         if len(cols) == 0:
             ax.set_title(title + " (no roles)")
-            ax.set_ylim(0, 100)
+            ax.set_ylim(0, 1)
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            ax.set_xticks([])
+            ax.set_yticks([])
             return
 
         # baseline
@@ -358,8 +376,8 @@ def plot_top_roles_trends(
     # ----------------------------------------
     # BASELINES FOR EACH SUBPLOT
     # ----------------------------------------
-    victim_total = pct[top_victims].sum(axis=1) if len(top_victims) else pd.Series(0, index=pct.index)
-    villain_total = pct[top_villains].sum(axis=1) if len(top_villains) else pd.Series(0, index=pct.index)
+    victim_total = pct[top_victims].sum(axis=1) if top_victims else pd.Series([0] * len(pct), index=pct.index)
+    villain_total = pct[top_villains].sum(axis=1) if top_villains else pd.Series([0] * len(pct), index=pct.index)
 
     base_victims = np.zeros(len(pct))
     base_villains = victim_total.values
@@ -405,19 +423,94 @@ def plot_top_roles_trends(
     for ax in [ax0, ax1, ax2]:
         ax.tick_params(axis="x", labelbottom=False, color="#ffffff")
 
+    ax.set_xlim(pct["month"].min(), pct["month"].max())
+    ax.margins(x=0.01)
+
+
     plt.tight_layout()
 
     if figure_export:
         plt.savefig(
             figure_export,
-            dpi=300,
-            bbox_inches="tight",
+            dpi=120,
+            bbox_inches=None,
             transparent=True
         )
 
     plt.show()
 
 
+def make_roles_trend_gif(
+    output,
+    output_clean,
+    gif_path="roles_evolution.gif",
+    fps=1,
+    temp_dir="gif_frames",
+    **plot_kwargs
+):
+    """
+    Creates a GIF animation of the plot_top_roles_trends figure
+    evolving month-by-month.
+    """
+
+    # ------------------------------------------------------------
+    # Work on datetime-safe copies
+    # ------------------------------------------------------------
+    out_dt = output.copy()
+    out_clean_dt = output_clean.copy()
+
+    out_dt["date"] = pd.to_datetime(out_dt["date"])
+    out_clean_dt["date"] = pd.to_datetime(out_clean_dt["date"])
+
+    # ------------------------------------------------------------
+    # Identify sorted unique months from the CLEAN dataframe
+    # ------------------------------------------------------------
+    out_clean_dt["month"] = (
+        out_clean_dt["date"].dt.to_period("M").dt.to_timestamp()
+    )
+    months = sorted(out_clean_dt["month"].unique())
+
+    # ------------------------------------------------------------
+    # Prepare temporary folder
+    # ------------------------------------------------------------
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    frame_paths = []
+
+    # ------------------------------------------------------------
+    # Generate frames month-by-month
+    # ------------------------------------------------------------
+    for i, m in enumerate(months):
+        print(f"Rendering frame {i+1}/{len(months)} for month {m.date()}")
+
+        # Subset both datasets up to this month (now both are datetime)
+        output_sub = out_dt[out_dt["date"] <= m].copy()
+        output_clean_sub = out_clean_dt[out_clean_dt["date"] <= m].copy()
+
+        frame_file = os.path.join(temp_dir, f"frame_{i:03d}.png")
+
+        # Call your existing plotting function
+        plot_top_roles_trends(
+            output=output_sub,
+            output_clean=output_clean_sub,
+            figure_export=frame_file,
+            **plot_kwargs
+        )
+
+        # Close the figure to avoid memory buildup
+        plt.close("all")
+        frame_paths.append(frame_file)
+
+    # ------------------------------------------------------------
+    # Build GIF from saved frames
+    # ------------------------------------------------------------
+    print("Assembling GIF...")
+    with imageio.get_writer(gif_path, mode="I", fps=fps) as writer:
+        for fp in frame_paths:
+            writer.append_data(imageio.imread(fp))
+
+    print(f"GIF saved at: {gif_path}")
 
 # %% main
 
@@ -477,15 +570,44 @@ if __name__ == "__main__":
     print(f"Kept {len(df_article)} Articles with narrative character roles")
 
     # %% Plot top role trends overtime
-    figure_export = Path(ROOT) / "figures/role_trends.png"
-    plot_top_roles_trends(df_article, df_article, top_n=14, 
-                          show_total_line=False, figure_export=figure_export,
-                          add_stats_annotations=False)
+    # figure_export = Path(ROOT) / "figures/role_trends.png"
+    # plot_top_roles_trends(df_article, df_article, top_n=14, 
+    #                       show_total_line=False, figure_export=figure_export,
+    #                       add_stats_annotations=False)
     
-    figure_export = Path(ROOT) / "figures/role_trends_detailed.png"
-    plot_top_roles_trends(df_article, df_article, top_n=14, 
-                          show_total_line=False, figure_export=figure_export,
-                          add_stats_annotations=True)
+    # figure_export = Path(ROOT) / "figures/role_trends_detailed.png"
+    # plot_top_roles_trends(df_article, df_article, top_n=14, 
+    #                       show_total_line=False, figure_export=figure_export,
+    #                       add_stats_annotations=True)
+
+    # %%
+
+    make_roles_trend_gif(
+        df_article,       # output
+        df_article,       # output_clean (or the correct clean df)
+        gif_path="roles_animation.gif",
+        fps=1,
+        add_stats_annotations=False,
+        show_total_line=False,
+    )
+    # %%
+
+    make_roles_trend_gif(
+        df_article,       # output
+        df_article,       # output_clean (or the correct clean df)
+        gif_path="roles_animation_annotated.gif",
+        fps=1,
+        add_stats_annotations=True,
+        show_total_line=False,
+    )
+
+
+
+
+
+
+
+
 
     # %% Plot comparative roles with survey data
 
@@ -924,3 +1046,4 @@ if __name__ == "__main__":
         plot_single_role_trend(df_article, role=role, top_n=top_n,figure_export= Path(ROOT) / f"figures/{role}_trend.png", show_total_line=False)
 
 # %%
+# 
