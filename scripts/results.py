@@ -580,7 +580,7 @@ if __name__ == "__main__":
     #                       show_total_line=False, figure_export=figure_export,
     #                       add_stats_annotations=True)
 
-    # %%
+    # %% Create role trend GIF without annotation
 
     make_roles_trend_gif(
         df_article,       # output
@@ -590,7 +590,7 @@ if __name__ == "__main__":
         add_stats_annotations=False,
         show_total_line=False,
     )
-    # %%
+    # %% Create role trend GIF with annotation
 
     make_roles_trend_gif(
         df_article,       # output
@@ -600,14 +600,6 @@ if __name__ == "__main__":
         add_stats_annotations=True,
         show_total_line=False,
     )
-
-
-
-
-
-
-
-
 
     # %% Plot comparative roles with survey data
 
