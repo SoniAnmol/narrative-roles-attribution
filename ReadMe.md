@@ -1,8 +1,7 @@
 # narrative-roles-attribution
 
 This repository contains materials related to the paper  
-**"Narrating the Deluge: Media Framing and Public Attribution of Climate
-Change in the Emilia-Romagna Floods"**  
+**"Narrating the Deluge: Media and Residents Diverge in their Extreme Weather Event Narratives}"**  
 by Tina Comes, Giulia Piccillo, Anmol Soni, and Tania Treibich.
 
 ## Overview
