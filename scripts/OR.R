@@ -94,16 +94,16 @@ fit_clm <- function(outcome, controls = NULL) {
 res_attr <- fit_clm("respondents_flood_attribution")
 res_mitg <- fit_clm("took_mitigation_steps_post_foods")
 
-main_results <- bind_rows(res_attr$stats, res_mitg$stats) %>%
-  mutate(
-    p_holm = p.adjust(p, method = "holm"),
-    Outcome = case_when(
-      outcome == "respondents_flood_attribution" ~
-        "Flood attribution to climate change",
-      outcome == "took_mitigation_steps_post_foods" ~
-        "Mitigation engagement"
-    )
-  )
+# main_results <- bind_rows(res_attr$stats, res_mitg$stats) %>%
+#   mutate(
+#     p_holm = p.adjust(p, method = "holm"),
+#     Outcome = case_when(
+#       outcome == "respondents_flood_attribution" ~
+#         "Flood attribution to climate change",
+#       outcome == "took_mitigation_steps_post_foods" ~
+#         "Mitigation engagement"
+#     )
+#   )
 
 print(main_results)
 
@@ -116,7 +116,7 @@ table_main <- main_results %>%
     `Odds Ratio` = round(OR, 2),
     `95\\% CI` = paste0("[", round(CIlo, 2), ", ", round(CIhi, 2), "]"),
     `p` = round(p, 3),
-    `Holm-adjusted p` = round(p_holm, 3)
+    # `Holm-adjusted p` = round(p_holm, 3) NOT APPLICABLE AND RELEVANT 
   )
 
 print(
