@@ -13,8 +13,8 @@ library(xtable)
 # 2) Load data (Windows-safe)
 # -------------------------
 candidate_paths <- c(
-  "./data/T_subset.csv",
-  "data/T_subset.csv",
+  "./data/survey_data/T_subset.csv",
+  "data/survey_data/T_subset.csv",
   "./T_subset.csv",
   "T_subset.csv"
 )
@@ -33,11 +33,11 @@ df <- df_raw %>%
   mutate(
     # SINGLE, CANONICAL recode
     flooded = case_when(
-      flooded %in% c(TRUE, 1)  ~ "Flooded",
-      flooded %in% c(FALSE, 0) ~ "Unaffected",
+      flooded %in% c(TRUE, 1)  ~ "Respondents from flooded municipalities",
+      flooded %in% c(FALSE, 0) ~ "Respondents from non-flooded municipalities",
       TRUE ~ NA_character_
     ),
-    flooded = factor(flooded, levels = c("Unaffected", "Flooded")),
+    flooded = factor(flooded, levels = c("Respondents from non-flooded municipalities", "Respondents from flooded municipalities")),
 
     # Outcomes (ordinal Likert)
     respondents_flood_attribution =
@@ -137,7 +137,7 @@ print(
 # 8) FIGURE: predicted top-category probabilities
 # -------------------------
 newdat <- tibble(flooded = factor(
-  c("Unaffected", "Flooded"),
+  c("Respondents from non-flooded municipalities", "Respondents from flooded municipalities"),
   levels = levels(df$flooded)
 ))
 
@@ -155,13 +155,19 @@ top_probs <- tibble(
                names_to = "group",
                values_to = "probability") %>%
   mutate(
-    group = factor(group, levels = c("Unaffected", "Flooded")),
+    # Map short names to full labels
+    group = case_when(
+      group == "Unaffected" ~ "Respondents from non-flooded municipalities",
+      group == "Flooded" ~ "Respondents from flooded municipalities",
+      TRUE ~ group
+    ),
+    group = factor(group, levels = c("Respondents from non-flooded municipalities", "Respondents from flooded municipalities")),
     label = scales::percent(probability, accuracy = 1),
     x = case_when(
-      outcome == "Strong climate attribution" & group == "Unaffected" ~ 1.0,
-      outcome == "Strong climate attribution" & group == "Flooded"    ~ 1.4,
-      outcome == "Strong mitigation engagement" & group == "Unaffected" ~ 2.0,
-      outcome == "Strong mitigation engagement" & group == "Flooded"    ~ 2.4
+      outcome == "Strong climate attribution" & group == "Respondents from non-flooded municipalities" ~ 1.0,
+      outcome == "Strong climate attribution" & group == "Respondents from flooded municipalities"    ~ 1.4,
+      outcome == "Strong mitigation engagement" & group == "Respondents from non-flooded municipalities" ~ 2.0,
+      outcome == "Strong mitigation engagement" & group == "Respondents from flooded municipalities"    ~ 2.4
     )
   )
 
@@ -174,16 +180,16 @@ p <- ggplot(top_probs, aes(x = x, y = probability, fill = group)) +
     labels = c("Strong climate attribution",
                "Strong mitigation engagement")
   ) +
-  scale_fill_manual(values = c("Unaffected" = "grey75",
-                               "Flooded" = "grey30")) +
-  labs(x = NULL, y = "Predicted probability (highest category)") +
+  scale_fill_manual(values = c("Respondents from non-flooded municipalities" = "#E69F00",
+                               "Respondents from flooded municipalities" = "#D55E00")) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE)) +
+  labs(x = NULL, y = "Predicted probability") +
   theme_classic(base_size = 14) +
   theme(
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
     axis.line.y = element_blank(),
-    legend.position = c(0.98, 0.98),
-    legend.justification = c("right", "top"),
+    legend.position = "bottom",
     legend.title = element_blank()
   )
 
