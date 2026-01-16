@@ -885,10 +885,225 @@ if __name__ == "__main__":
     # %% plot the dumbell chart for self and peer role attributions
     # Read the role count df
     role_counts_peers = pd.read_excel(Path(ROOT) / "data/survey_data/roles_comparisions.xlsx", sheet_name=2)
-    # TODO: plot dumbell plot of self and peer role attribution for affected vs unaffected municipalities
     
-   # %%
-   def plot_single_role_trend(
+    # Colorblind-friendly palette (Wong palette, suitable for Nature Climate Change)
+    COLORBLIND_COLORS_PEERS = {
+        0: '#D55E00',  # Vermillion
+        1: '#E69F00',  # Orange
+        2: '#0072B2',  # Blue
+        3: '#56B4E9',  # Sky Blue
+        4: '#009E73',  # Bluish Green
+        5: '#F0E442',  # Yellow
+        6: '#CC79A7',  # Reddish Purple
+    }
+
+    # Flag to control value annotations (True = show values, False = show x-axis instead)
+    show_value_annotations_peers = False
+
+    fig_peers = plt.figure(figsize=(16, 26), dpi=300)
+    gs_peers = gridspec.GridSpec(
+        3, 1,
+        height_ratios=[2.75, 5.5, 5],
+        hspace=0.3
+    )
+
+    role_to_ax_peers = {
+        'victim': fig_peers.add_subplot(gs_peers[0, 0]),
+        'villain': fig_peers.add_subplot(gs_peers[1, 0]),
+        'hero': fig_peers.add_subplot(gs_peers[2, 0])
+    }
+
+    for role in ['victim', 'villain', 'hero']:
+        ax = role_to_ax_peers[role]
+        df_role = role_counts_peers[role_counts_peers['role'] == role].copy()
+
+        # Calculate percentage share for each source
+        for source in df_role['source'].unique():
+            total = df_role.loc[df_role['source'] == source, 'count'].sum()
+            df_role.loc[df_role['source'] == source, 'pct_share'] = (
+                df_role.loc[df_role['source'] == source, 'count'] / total * 100
+            )
+
+        # Pivot to get sources as columns
+        df_plot = df_role.pivot(index='actor', columns='source', values='pct_share')
+        df_plot = df_plot.rename(columns=str.lower)
+
+        # Determine actor ordering based on total counts
+        actor_order = (
+            df_role.groupby("actor")["count"]
+            .sum()
+            .sort_values(ascending=True)
+            .index.tolist()
+        )
+
+        df_plot = df_plot.reindex(actor_order).reset_index()
+        df_plot['actor'] = df_plot['actor'].astype(str)
+
+        # Dynamically detect available sources
+        available_sources = [col for col in df_plot.columns if col != 'actor']
+
+        # Assign colors to sources
+        source_colors = {src: COLORBLIND_COLORS_PEERS[i] for i, src in enumerate(available_sources)}
+
+        # Plot data for each actor
+        for idx, row in df_plot.iterrows():
+            actor = row['actor']
+
+            # Get values for all available sources
+            source_values = {src: row[src] if src in row.index and not pd.isna(row[src]) else None
+                           for src in available_sources}
+
+            # Filter out None values
+            valid_sources = {src: val for src, val in source_values.items() if val is not None}
+
+            # Skip if no valid data for this actor
+            if not valid_sources:
+                continue
+
+            # Plot points for each source
+            for src, val in valid_sources.items():
+                ax.scatter(val, actor, color=source_colors[src], s=250, zorder=2,
+                         edgecolors='white', linewidths=2)
+
+            # Draw connecting lines between consecutive points
+            if len(valid_sources) >= 2:
+                sorted_sources = sorted(valid_sources.items(), key=lambda x: x[1])
+
+                for i in range(len(sorted_sources) - 1):
+                    src1, val1 = sorted_sources[i]
+                    src2, val2 = sorted_sources[i + 1]
+
+                    ax.plot(
+                        [val1, val2],
+                        [actor, actor],
+                        color='#AAAAAA', linewidth=2.5, zorder=1, alpha=0.5
+                    )
+
+            # Add value labels with alternating positions for better readability
+            if show_value_annotations_peers:
+                for src_idx, (src, val) in enumerate(sorted(valid_sources.items(), key=lambda x: x[1])):
+                    # Alternate between top and bottom for better spacing
+                    if len(valid_sources) == 3:
+                        # For 3 categories: bottom, top, bottom
+                        if src_idx == 1:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=0, y=0.12)
+                            va = 'bottom'
+                        else:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=0, y=-0.12)
+                            va = 'top'
+                    elif len(valid_sources) == 2:
+                        # For 2 categories: both bottom but with horizontal offset
+                        if src_idx == 0:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=-0.3, y=-0.12)
+                        else:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=0.3, y=-0.12)
+                        va = 'top'
+                    else:
+                        # For 1 category: centered below
+                        text_offset = offset_copy(ax.transData, fig=ax.figure, x=0, y=-0.12)
+                        va = 'top'
+
+                    ax.text(
+                        val, actor, f"{val:.1f}%",
+                        color='#000000', fontsize=18, ha='center', va=va,
+                        transform=text_offset, fontweight='medium'
+                    )
+
+            # Add difference annotation only for large differences
+            if len(valid_sources) >= 2:
+                min_val = min(valid_sources.values())
+                max_val = max(valid_sources.values())
+                diff = max_val - min_val
+
+                if diff >= 15:  # Increased threshold for cleaner look
+                    mid_x = min_val + diff / 2
+                    ax.text(
+                        mid_x, actor, f"Δ{diff:.0f}%",
+                        color='#555555', fontsize=14, ha='center', va='center',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                 edgecolor='#CCCCCC', alpha=0.8),
+                        fontweight='bold'
+                    )
+
+            # Actor label on the left
+            ax.text(
+                -15, actor, actor,
+                color='#000000', fontsize=18,
+                ha='right', va='center', fontweight='medium'
+            )
+
+            # Horizontal gridline for each actor
+            ax.hlines(
+                actor, xmin=-12, xmax=100,
+                color='#DDDDDD', linewidth=1, zorder=0, alpha=0.5
+            )
+
+        # Vertical line separating labels from plot
+        ax.axvline(x=-12, color='#CCCCCC', linewidth=1.5)
+
+        # Title
+        ax.text(
+            0.5, 1.08,
+            f'{role.capitalize()} Role Comparison (Self vs Peer Attribution)',
+            transform=ax.transAxes,
+            ha='center', va='bottom',
+            fontsize=22, fontweight='bold'
+        )
+
+        # Set axis limits
+        ax.set_xlim(-12, 100)
+
+        # Create dynamic legend based on available sources
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w',
+                   label=src.replace('_', ' ').title(),
+                   markerfacecolor=source_colors[src],
+                   markersize=12,
+                   markeredgecolor='white',
+                   markeredgewidth=2)
+            for src in available_sources
+        ]
+        ax.legend(handles=legend_elements, loc='lower right', fontsize=16, frameon=True,
+                 fancybox=False, shadow=False, framealpha=0.95, edgecolor='#CCCCCC')
+
+        # Always hide y-axis ticks and labels
+        ax.set_yticks([])
+        ax.tick_params(axis='y', which='both', left=False, labelleft=False)
+
+        # Show x-axis when value annotations are off
+        if not show_value_annotations_peers:
+            ax.set_xlabel('Percentage Share (%)', fontsize=18, fontweight='medium')
+            ax.tick_params(axis='x', which='major', labelsize=16, length=6, width=1.5,
+                          colors='#333333', pad=8)
+            ax.spines['bottom'].set_visible(True)
+            ax.spines['bottom'].set_color('#CCCCCC')
+            ax.spines['bottom'].set_linewidth(1.5)
+            # Set x-ticks
+            ax.set_xticks(range(0, 101, 10))
+            ax.set_xticklabels([f'{x}%' for x in range(0, 101, 10)])
+            # Add minor gridlines on x-axis
+            ax.grid(axis='x', which='major', color='#EEEEEE', linestyle='-', linewidth=1, alpha=0.7)
+            # Hide x-ticks when annotations are on
+            ax.tick_params(axis='x', which='both', bottom=True, labelbottom=True)
+        else:
+            # Hide x-axis when annotations are on
+            ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+
+        # Always keep top, right, left spines hidden
+        for spine in ['top', 'right', 'left']:
+            ax.spines[spine].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(
+        Path(ROOT) / "figures/self_peer_roles_dumbbell_affected_unaffected.png",
+        dpi=300,
+        bbox_inches='tight',
+        transparent=False
+    )
+    plt.show()
+    
+    # %%
+    def plot_single_role_trend(
         output_clean,
         role="hero",
         top_n=12,
