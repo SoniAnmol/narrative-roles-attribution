@@ -884,6 +884,14 @@ if __name__ == "__main__":
 
     # %% plot the dumbell chart for self and peer role attributions
     # Read the role count df
+    # Expected data structure for sheet 2:
+    # Columns: ['role', 'actor', 'source', 'count']
+    # - role: narrative role type (hero, villain, victim)
+    # - actor: entity/group (e.g., municipality, people, business, government, agriculture, etc.)
+    # - source: attribution type (e.g., 'self', 'peer', 'affected_self', 'affected_peer', 
+    #           'unaffected_self', 'unaffected_peer')
+    # - count: number of role attributions
+    # The plot will dynamically detect available sources and create dumbbell connections between them.
     role_counts_peers = pd.read_excel(Path(ROOT) / "data/survey_data/roles_comparisions.xlsx", sheet_name=2)
     
     # Colorblind-friendly palette (Wong palette, suitable for Nature Climate Change)
