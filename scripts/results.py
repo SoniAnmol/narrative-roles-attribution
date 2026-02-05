@@ -16,6 +16,8 @@ from matplotlib.transforms import offset_copy
 import imageio
 import os
 import seaborn as sns
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 # from responses import start
 
 
@@ -742,8 +744,22 @@ if __name__ == "__main__":
 
             # Plot points for each source
             for src, val in valid_sources.items():
-                ax.scatter(val, actor, color=source_colors[src], s=250, zorder=2,
-                         edgecolors='white', linewidths=2)
+                if src == 'newspaper':
+                    ax.scatter(
+                        val, actor,
+                        facecolors='none',                     # hollow
+                        edgecolors=source_colors[src],         # colored outline
+                        s=250, zorder=2,
+                        linewidths=2.5
+                    )
+                else:
+                    ax.scatter(
+                        val, actor,
+                        color=source_colors[src],              # filled
+                        s=250, zorder=2,
+                        edgecolors='white',
+                        linewidths=2
+                    )
 
             # Draw connecting lines between consecutive points
             if len(valid_sources) >= 2:
@@ -835,14 +851,19 @@ if __name__ == "__main__":
 
         # Create dynamic legend based on available sources
         legend_elements = [
-            Line2D([0], [0], marker='o', color='w',
-                   label=src.replace('_', ' ').title(),
-                   markerfacecolor=source_colors[src],
-                   markersize=12,
-                   markeredgecolor='white',
-                   markeredgewidth=2)
-            for src in available_sources
-        ]
+    Line2D(
+        [0], [0],
+        marker='o',
+        color='w',
+        label=src.replace('_', ' ').title(),
+        markerfacecolor='none' if src == 'newspaper' else source_colors[src],
+        markeredgecolor=source_colors[src],
+        markeredgewidth=2,
+        markersize=12
+    )
+    for src in available_sources
+]
+
         ax.legend(handles=legend_elements, loc='lower right', fontsize=16, frameon=True,
                  fancybox=False, shadow=False, framealpha=0.95, edgecolor='#CCCCCC')
 
@@ -888,7 +909,7 @@ if __name__ == "__main__":
     # Columns: ['role', 'actor', 'source', 'count']
     # - role: narrative role type (hero, villain, victim)
     # - actor: entity/group (e.g., municipality, people, business, government, agriculture, etc.)
-    # - source: attribution type (e.g., 'self', 'peer', 'affected_self', 'affected_peer', 
+    # - source: attribution type (e.g., 'self', 'peer', 'affected_self', 'affected_peer',
     #           'unaffected_self', 'unaffected_peer')
     # - count: number of role attributions
     # The plot will dynamically detect available sources and create dumbbell connections between them.
