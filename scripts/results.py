@@ -15,6 +15,9 @@ from matplotlib import axis, gridspec
 from matplotlib.transforms import offset_copy
 import imageio
 import os
+import seaborn as sns
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 # from responses import start
 
 
@@ -22,6 +25,7 @@ import os
 ROOT = Path(__file__).resolve().parent.parent
 
 # %% methods
+
 
 def plot_top_roles_trends(
     output,
@@ -75,7 +79,6 @@ def plot_top_roles_trends(
         fig.savefig(figure_export, dpi=200, bbox_inches="tight")
         plt.close(fig)
         return
-
 
     # ----------------------------------------
     # Find global top-N roles
@@ -381,7 +384,7 @@ def plot_top_roles_trends(
 
     base_victims = np.zeros(len(pct))
     base_villains = victim_total.values
-    base_heroes  = (victim_total + villain_total).values
+    base_heroes = (victim_total + villain_total).values
 
     # ----------------------------------------
     # Figure layout
@@ -425,7 +428,6 @@ def plot_top_roles_trends(
 
     ax.set_xlim(pct["month"].min(), pct["month"].max())
     ax.margins(x=0.01)
-
 
     plt.tight_layout()
 
@@ -514,6 +516,7 @@ def make_roles_trend_gif(
 
 # %% main
 
+
 if __name__ == "__main__":
 
     # read files
@@ -525,13 +528,13 @@ if __name__ == "__main__":
     # remove actor-role combinations with poor F1 score
     f1_score_path = Path(ROOT) / "data/model_performance/classification_report.xlsx"
     f1_score = pd.read_excel(f1_score_path)
-    drop_roles = f1_score.loc[f1_score['f1-score']<0.5, 'Unnamed: 0']
+    drop_roles = f1_score.loc[f1_score['f1-score'] < 0.5, 'Unnamed: 0']
     output.drop(columns=drop_roles, inplace=True)
 
     # rename actor for clarity
-    output.rename(columns={'region-hero':'regional government-hero',
-                           'region-villain':'regional government-villain',
-                           'region-victim':'regional government-victim',}, inplace=True)
+    output.rename(columns={'region-hero': 'regional government-hero',
+                           'region-villain': 'regional government-villain',
+                           'region-victim': 'regional government-victim', }, inplace=True)
 
     actor_role_cols = output.columns[output.columns.str.endswith(("-hero", "-villain", "-victim"))].tolist()
 
@@ -571,12 +574,12 @@ if __name__ == "__main__":
 
     # %% Plot top role trends overtime
     # figure_export = Path(ROOT) / "figures/role_trends.png"
-    # plot_top_roles_trends(df_article, df_article, top_n=14, 
+    # plot_top_roles_trends(df_article, df_article, top_n=14,
     #                       show_total_line=False, figure_export=figure_export,
     #                       add_stats_annotations=False)
-    
+
     # figure_export = Path(ROOT) / "figures/role_trends_detailed.png"
-    # plot_top_roles_trends(df_article, df_article, top_n=14, 
+    # plot_top_roles_trends(df_article, df_article, top_n=14,
     #                       show_total_line=False, figure_export=figure_export,
     #                       add_stats_annotations=True)
 
@@ -616,19 +619,19 @@ if __name__ == "__main__":
     print(f"Valid response count: {len(survey_data)}")
 
     # map narrative character roles form the survey questions
-    actor_mapper = {'local businesses':'business',
-                    'local businesses and enterprises':'business',
-                    'residents/local population':'people',
-                    'Houses and buildings':'people',
-                    'Critical infrastructure, including roads and power lines':'essential goods and infrastructure',
-                    'local residents':'people',
-                    'farmers and agricultural companies':'agriculture',
-                    'the farmers':'agriculture',
-                    'the ngos':'civil society',
-                    'The national government':'national government',
-                    'The regional government':'regional government',
-                    'Local authorities':'municipality',
-                    'The environment, including plants and animals':'environment'}
+    actor_mapper = {'local businesses': 'business',
+                    'local businesses and enterprises': 'business',
+                    'residents/local population': 'people',
+                    'Houses and buildings': 'people',
+                    'Critical infrastructure, including roads and power lines': 'essential goods and infrastructure',
+                    'local residents': 'people',
+                    'farmers and agricultural companies': 'agriculture',
+                    'the farmers': 'agriculture',
+                    'the ngos': 'civil society',
+                    'The national government': 'national government',
+                    'The regional government': 'regional government',
+                    'Local authorities': 'municipality',
+                    'The environment, including plants and animals': 'environment'}
 
     for role in ['hero', 'villain', 'victim']:
         if role == 'hero':
@@ -650,26 +653,40 @@ if __name__ == "__main__":
                 survey_data[role] == "the government", govt_col]
         survey_data[role] = survey_data[role].replace(actor_mapper)
         print(survey_data[role].value_counts())
-    # add victim_non_living 
+    # add victim_non_living
     survey_data['victim_non_living'] = survey_data['Q16'].replace(actor_mapper)
     print(survey_data['victim_non_living'].value_counts())
 
-    #%% compute the role counts for newspaper corpus
+    # %% compute the role counts for newspaper corpus
     newspaper_role_counts = []
     for role in ['hero', 'villain', 'victim']:
         role_cols = output.columns[output.columns.str.endswith((f"-{role}"))].tolist()
         newspaper_role_counts.append(df_article[role_cols].sum(axis=0))
-    newspaper_role_counts = pd.concat(newspaper_role_counts)    
+    newspaper_role_counts = pd.concat(newspaper_role_counts)
 
-    #%% plot the dumbell chart
+    # %% plot the dumbell chart
     # Read the role count df
-    role_counts = pd.read_excel(Path(ROOT)/ "data/survey_data/roles_comparisions.xlsx")
+    role_counts = pd.read_excel(Path(ROOT) / "data/survey_data/roles_comparisions.xlsx", sheet_name=1)
 
-    fig = plt.figure(figsize=(12, 24), dpi=300)
+    # Colorblind-friendly palette (Wong palette, suitable for Nature Climate Change)
+    COLORBLIND_COLORS = {
+        0: '#D55E00',  # Vermillion
+        1: '#E69F00',  # Orange
+        2: '#0072B2',  # Blue
+        3: '#56B4E9',  # Sky Blue
+        4: '#009E73',  # Bluish Green
+        5: '#F0E442',  # Yellow
+        6: '#CC79A7',  # Reddish Purple
+    }
+
+    # Flag to control value annotations (True = show values, False = show x-axis instead)
+    show_value_annotations = False
+
+    fig = plt.figure(figsize=(16, 26), dpi=300)
     gs = gridspec.GridSpec(
         3, 1,
         height_ratios=[2.75, 5.5, 5],
-        hspace=0.25
+        hspace=0.3
     )
 
     role_to_ax = {
@@ -677,20 +694,23 @@ if __name__ == "__main__":
         'villain': fig.add_subplot(gs[1, 0]),
         'hero': fig.add_subplot(gs[2, 0])
     }
+
     for role in ['victim', 'villain', 'hero']:
         ax = role_to_ax[role]
         df_role = role_counts[role_counts['role'] == role].copy()
-        
+
+        # Calculate percentage share for each source
         for source in df_role['source'].unique():
             total = df_role.loc[df_role['source'] == source, 'count'].sum()
             df_role.loc[df_role['source'] == source, 'pct_share'] = (
                 df_role.loc[df_role['source'] == source, 'count'] / total * 100
             )
 
+        # Pivot to get sources as columns
         df_plot = df_role.pivot(index='actor', columns='source', values='pct_share')
-
         df_plot = df_plot.rename(columns=str.lower)
 
+        # Determine actor ordering based on total counts
         actor_order = (
             df_role.groupby("actor")["count"]
             .sum()
@@ -698,141 +718,588 @@ if __name__ == "__main__":
             .index.tolist()
         )
 
-        # reindex df_plot to keep ALL actors
-        df_plot = df_plot.reindex(actor_order)
-
-        df_plot = df_plot.reset_index()
+        df_plot = df_plot.reindex(actor_order).reset_index()
         df_plot['actor'] = df_plot['actor'].astype(str)
 
-        # check which columns actually exist
-        has_survey = 'survey' in df_plot.columns
-        has_newspaper = 'newspaper' in df_plot.columns
+        # Dynamically detect available sources
+        available_sources = [col for col in df_plot.columns if col != 'actor']
 
-        for _, row in df_plot.iterrows():
+        # Assign colors to sources
+        source_colors = {src: COLORBLIND_COLORS[i] for i, src in enumerate(available_sources)}
 
+        # Plot data for each actor
+        for idx, row in df_plot.iterrows():
             actor = row['actor']
-            survey_val = row['survey'] if has_survey else np.nan
-            news_val   = row['newspaper'] if has_newspaper else np.nan
 
-            # Skip completely empty rows
-            if pd.isna(survey_val) and pd.isna(news_val):
+            # Get values for all available sources
+            source_values = {src: row[src] if src in row.index and not pd.isna(row[src]) else None
+                           for src in available_sources}
+
+            # Filter out None values
+            valid_sources = {src: val for src, val in source_values.items() if val is not None}
+
+            # Skip if no valid data for this actor
+            if not valid_sources:
                 continue
 
-            # Skip actors that only have newspaper data
-            if pd.isna(survey_val):
-                continue
-
-            if not pd.isna(survey_val) and not pd.isna(news_val):
-
-                # dumbbell line
-                ax.plot(
-                    [survey_val, news_val],
-                    [actor, actor],
-                    color='gray', linewidth=2, zorder=1
-                )
-
-                # dots
-                ax.scatter(survey_val, actor, color='blue', s=200, zorder=2)
-                ax.scatter(news_val, actor, color='orange', s=200, zorder=2)
-
-                # offsets
-                if survey_val > news_val:
-                    newspaper_text_offset = offset_copy(
-                        ax.transData, fig=ax.figure, x=-0.5, y=-0.075
-                    )
-                    survey_text_offset = offset_copy(
-                        ax.transData, fig=ax.figure, x=0.5, y=-0.075
+            # Plot points for each source
+            for src, val in valid_sources.items():
+                if src == 'newspaper':
+                    ax.scatter(
+                        val, actor,
+                        facecolors='none',                     # hollow
+                        edgecolors=source_colors[src],         # colored outline
+                        s=250, zorder=2,
+                        linewidths=2.5
                     )
                 else:
-                    newspaper_text_offset = offset_copy(
-                        ax.transData, fig=ax.figure, x=0.5, y=-0.075
-                    )
-                    survey_text_offset = offset_copy(
-                        ax.transData, fig=ax.figure, x=-0.5, y=-0.075
+                    ax.scatter(
+                        val, actor,
+                        color=source_colors[src],              # filled
+                        s=250, zorder=2,
+                        edgecolors='white',
+                        linewidths=2
                     )
 
-                # labels
-                ax.text(
-                    survey_val, actor, f"{survey_val:.1f}%",
-                    color='#222222', fontsize=16, ha='center', va='bottom',
-                    transform=survey_text_offset
-                )
-                ax.text(
-                    news_val, actor, f"{news_val:.1f}%",
-                    color='#222222', fontsize=16, ha='center', va='bottom',
-                    transform=newspaper_text_offset
-                )
+            # Draw connecting lines between consecutive points
+            if len(valid_sources) >= 2:
+                sorted_sources = sorted(valid_sources.items(), key=lambda x: x[1])
 
-                # diff annotation
-                diff_x = abs(survey_val - news_val)
-                if diff_x >= 10:
-                    mid_x = min(survey_val, news_val) + diff_x / 2
+                for i in range(len(sorted_sources) - 1):
+                    src1, val1 = sorted_sources[i]
+                    src2, val2 = sorted_sources[i + 1]
+
+                    ax.plot(
+                        [val1, val2],
+                        [actor, actor],
+                        color='#AAAAAA', linewidth=2.5, zorder=1, alpha=0.5
+                    )
+
+            # Add value labels with alternating positions for better readability
+            if show_value_annotations:
+                for src_idx, (src, val) in enumerate(sorted(valid_sources.items(), key=lambda x: x[1])):
+                    # Alternate between top and bottom for better spacing
+                    if len(valid_sources) == 3:
+                        # For 3 categories: bottom, top, bottom
+                        if src_idx == 1:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=0, y=0.12)
+                            va = 'bottom'
+                        else:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=0, y=-0.12)
+                            va = 'top'
+                    elif len(valid_sources) == 2:
+                        # For 2 categories: both bottom but with horizontal offset
+                        if src_idx == 0:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=-0.3, y=-0.12)
+                        else:
+                            text_offset = offset_copy(ax.transData, fig=ax.figure, x=0.3, y=-0.12)
+                        va = 'top'
+                    else:
+                        # For 1 category: centered below
+                        text_offset = offset_copy(ax.transData, fig=ax.figure, x=0, y=-0.12)
+                        va = 'top'
+
                     ax.text(
-                        mid_x, actor, f"{diff_x:.1f}%",
-                        color='#222222', fontsize=10, ha='center', va='bottom',
-                        transform=offset_copy(ax.transData, fig=ax.figure, y=0.05)
+                        val, actor, f"{val:.1f}%",
+                        color='#000000', fontsize=18, ha='center', va=va,
+                        transform=text_offset, fontweight='medium'
                     )
 
+            # Add difference annotation only for large differences
+            if len(valid_sources) >= 2:
+                min_val = min(valid_sources.values())
+                max_val = max(valid_sources.values())
+                diff = max_val - min_val
 
-            elif not pd.isna(survey_val):
-                ax.scatter(survey_val, actor, color='blue', s=200, zorder=2)
-                ax.text(
-                    survey_val, actor, f"{survey_val:.1f}%",
-                    color='#222222', fontsize=16, ha='center', va='bottom',
-                    transform=offset_copy(ax.transData, fig=ax.figure, x=0.5, y=-0.075)
-                )
+                if diff >= 15:  # Increased threshold for cleaner look
+                    mid_x = min_val + diff / 2
+                    ax.text(
+                        mid_x, actor, f"Δ{diff:.0f}%",
+                        color='#555555', fontsize=14, ha='center', va='center',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                 edgecolor='#CCCCCC', alpha=0.8),
+                        fontweight='bold'
+                    )
 
-
+            # Actor label on the left
             ax.text(
-                -12, actor,
-                actor,
-                color='#222222', fontsize=16,
-                ha='right', va='center_baseline'
+                -15, actor, actor,
+                color='#000000', fontsize=18,
+                ha='right', va='center', fontweight='medium'
             )
 
+            # Horizontal gridline for each actor
             ax.hlines(
-                actor, xmin=-9, xmax=95,
-                color='#818589', linewidth=0.8, zorder=0,
-                transform=offset_copy(ax.transData, fig=ax.figure, y=-0.5)
+                actor, xmin=-12, xmax=100,
+                color='#DDDDDD', linewidth=1, zorder=0, alpha=0.5
             )
 
-        ax.axvline(x=-9, color='#dddddd', linewidth=0.8)
+        # Vertical line separating labels from plot
+        ax.axvline(x=-12, color='#CCCCCC', linewidth=1.5)
 
+        # Title
         ax.text(
-            0.5, 1.1,
+            0.5, 1.08,
             f'{role.capitalize()} Role Comparison',
             transform=ax.transAxes,
             ha='center', va='bottom',
-            fontsize=18, fontweight='bold'
+            fontsize=22, fontweight='bold'
         )
 
-        # ax.set_xlabel('Percentage Share (%)', fontsize=14)
-        ax.set_xlim(-9, 95)
+        # Set axis limits
+        ax.set_xlim(-12, 100)
 
+        # Create dynamic legend based on available sources
         legend_elements = [
-            Line2D([0], [0], marker='o', color='w', label='Survey',
-                markerfacecolor='blue', markersize=10),
-            Line2D([0], [0], marker='o', color='w', label='Newspaper',
-                markerfacecolor='orange', markersize=10)
-        ]
-        ax.legend(handles=legend_elements, loc='lower right', fontsize=14)
+    Line2D(
+        [0], [0],
+        marker='o',
+        color='w',
+        label=src.replace('_', ' ').title(),
+        markerfacecolor='none' if src == 'newspaper' else source_colors[src],
+        markeredgecolor=source_colors[src],
+        markeredgewidth=2,
+        markersize=12
+    )
+    for src in available_sources
+]
 
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.axis('off')
+        ax.legend(handles=legend_elements, loc='lower right', fontsize=16, frameon=True,
+                 fancybox=False, shadow=False, framealpha=0.95, edgecolor='#CCCCCC')
+
+        # Always hide y-axis ticks and labels
+        ax.set_yticks([])
+        ax.tick_params(axis='y', which='both', left=False, labelleft=False)
+
+        # Show x-axis when value annotations are off
+        if not show_value_annotations:
+            ax.set_xlabel('Percentage Share (%)', fontsize=18, fontweight='medium')
+            ax.tick_params(axis='x', which='major', labelsize=16, length=6, width=1.5,
+                          colors='#333333', pad=8)
+            ax.spines['bottom'].set_visible(True)
+            ax.spines['bottom'].set_color('#CCCCCC')
+            ax.spines['bottom'].set_linewidth(1.5)
+            # Set x-ticks
+            ax.set_xticks(range(0, 101, 10))
+            ax.set_xticklabels([f'{x}%' for x in range(0, 101, 10)])
+            # Add minor gridlines on x-axis
+            ax.grid(axis='x', which='major', color='#EEEEEE', linestyle='-', linewidth=1, alpha=0.7)
+            # Hide x-ticks when annotations are on
+            ax.tick_params(axis='x', which='both', bottom=True, labelbottom=True)
+        else:
+            # Hide x-axis when annotations are on
+            ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+
+        # Always keep top, right, left spines hidden
+        for spine in ['top', 'right', 'left']:
+            ax.spines[spine].set_visible(False)
 
     plt.tight_layout()
     plt.savefig(
-        Path(ROOT) / "figures/all_roles_dumbbell.png",
+        Path(ROOT) / "figures/all_roles_dumbbell_affected_unaffected.png",
         dpi=300,
         bbox_inches='tight',
-        transparent=True
+        transparent=False
     )
     plt.show()
 
+    # %% plot the dumbell chart for self and peer role attributions
+    # Read the role count df
+    # Expected data structure for sheet 2:
+    # Columns: ['role', 'actor', 'source', 'count']
+    # - role: narrative role type (hero, villain, victim)
+    # - actor: entity/group (e.g., municipality, people, business, government, agriculture, etc.)
+    # - source: attribution type (e.g., 'self', 'peer', 'affected_self', 'affected_peer',
+    #           'unaffected_self', 'unaffected_peer')
+    # - count: number of role attributions
+    # The plot will dynamically detect available sources and create dumbbell connections between them.
+    role_counts_peers = pd.read_excel(Path(ROOT) / "data/survey_data/roles_comparisions.xlsx", sheet_name=2)
 
-    # %%
-    def plot_single_role_trend(
+    # Colorblind-friendly palette for self vs peer
+    PEER_COLORS = {
+        'self': '#0072B2',   # Blue
+        'peer': '#009E73',   # Bluish Green
+    }
+
+    # Flag to control value annotations
+    show_value_annotations_peer = False
+
+    fig_peer = plt.figure(figsize=(16, 26), dpi=300)
+    gs_peer = gridspec.GridSpec(
+        3, 1,
+        height_ratios=[2.75, 5.5, 5],
+        hspace=0.3
+    )
+
+    role_to_ax_peer = {
+        'victim': fig_peer.add_subplot(gs_peer[0, 0]),
+        'villain': fig_peer.add_subplot(gs_peer[1, 0]),
+        'hero': fig_peer.add_subplot(gs_peer[2, 0])
+    }
+
+    for role in ['victim', 'villain', 'hero']:
+        ax = role_to_ax_peer[role]
+        df_role = role_counts_peers[role_counts_peers['role'] == role].copy()
+
+        # Group by actor and subjective role attribution (self vs peer)
+        # Aggregate across source (affected vs unaffected)
+        df_role_grouped = df_role.groupby(['actor', 'subjective role attribution'], as_index=False).agg({
+            'count': 'sum'
+        })
+
+        # Calculate percentage share for each attribution type (self vs peer)
+        for attr_type in df_role_grouped['subjective role attribution'].unique():
+            total = df_role_grouped.loc[df_role_grouped['subjective role attribution'] == attr_type, 'count'].sum()
+            df_role_grouped.loc[df_role_grouped['subjective role attribution'] == attr_type, 'pct_share'] = (
+                df_role_grouped.loc[df_role_grouped['subjective role attribution'] == attr_type, 'count'] / total * 100
+            )
+
+        # Pivot to get attribution types as columns
+        df_plot = df_role_grouped.pivot(index='actor', columns='subjective role attribution', values='pct_share')
+        df_plot = df_plot.rename(columns=str.lower)
+
+        # Determine actor ordering based on total counts
+        actor_order = (
+            df_role_grouped.groupby("actor")["count"]
+            .sum()
+            .sort_values(ascending=True)
+            .index.tolist()
+        )
+
+        df_plot = df_plot.reindex(actor_order).reset_index()
+        df_plot['actor'] = df_plot['actor'].astype(str)
+
+        # Dynamically detect available sources
+        available_sources = [col for col in df_plot.columns if col != 'actor']
+
+        # Assign colors to sources based on mapping
+        source_colors = {src: PEER_COLORS.get(src.lower(), f'#{i:02x}{i:02x}{i:02x}')
+                        for i, src in enumerate(available_sources)}
+
+        # Create label mapping for display
+        source_labels = {
+            'self': 'self role-attribution',
+            'peer': 'subjective peer role-attribution'
+        }
+        source_display_labels = {
+            src: source_labels.get(src.lower(), src.replace('_', ' ').title())
+            for src in available_sources
+        }
+
+        # Plot data for each actor
+        for idx, row in df_plot.iterrows():
+            actor = row['actor']
+
+            # Get values for all available sources
+            source_values = {src: row[src] if src in row.index and not pd.isna(row[src]) else None
+                           for src in available_sources}
+
+            # Filter out None values
+            valid_sources = {src: val for src, val in source_values.items() if val is not None}
+
+            # Skip if no valid data for this actor
+            if not valid_sources:
+                continue
+
+            # Plot points for each source
+            for src, val in valid_sources.items():
+                ax.scatter(val, actor, color=source_colors[src], s=250, zorder=2,
+                         edgecolors='white', linewidths=2)
+
+            # Draw connecting lines between consecutive points
+            if len(valid_sources) >= 2:
+                sorted_sources = sorted(valid_sources.items(), key=lambda x: x[1])
+
+                for i in range(len(sorted_sources) - 1):
+                    src1, val1 = sorted_sources[i]
+                    src2, val2 = sorted_sources[i + 1]
+
+                    ax.plot(
+                        [val1, val2],
+                        [actor, actor],
+                        color='#AAAAAA', linewidth=2.5, zorder=1, alpha=0.5
+                    )
+
+            # Add value labels with alternating positions for better readability
+            if show_value_annotations_peer:
+                for src_idx, (src, val) in enumerate(sorted(valid_sources.items(), key=lambda x: x[1])):
+                    # Alternate between top and bottom for better spacing
+                    if len(valid_sources) == 2:
+                        # For 2 categories: both bottom but with horizontal offset
+                        if src_idx == 0:
+                            text_offset = offset_copy(ax.transData, fig=fig_peer, x=-0.3, y=-0.12)
+                        else:
+                            text_offset = offset_copy(ax.transData, fig=fig_peer, x=0.3, y=-0.12)
+                        va = 'top'
+                    else:
+                        # For 1 category: centered below
+                        text_offset = offset_copy(ax.transData, fig=fig_peer, x=0, y=-0.12)
+                        va = 'top'
+
+                    ax.text(
+                        val, actor, f"{val:.1f}%",
+                        color='#000000', fontsize=18, ha='center', va=va,
+                        transform=text_offset, fontweight='medium'
+                    )
+
+            # Add difference annotation only for large differences
+            if len(valid_sources) >= 2:
+                min_val = min(valid_sources.values())
+                max_val = max(valid_sources.values())
+                diff = max_val - min_val
+
+                if diff >= 15:  # Increased threshold for cleaner look
+                    mid_x = min_val + diff / 2
+                    ax.text(
+                        mid_x, actor, f"Δ{diff:.0f}%",
+                        color='#555555', fontsize=14, ha='center', va='center',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                 edgecolor='#CCCCCC', alpha=0.8),
+                        fontweight='bold'
+                    )
+
+            # Actor label on the left
+            ax.text(
+                -15, actor, actor,
+                color='#000000', fontsize=18,
+                ha='right', va='center', fontweight='medium'
+            )
+
+            # Horizontal gridline for each actor
+            ax.hlines(
+                actor, xmin=-12, xmax=100,
+                color='#DDDDDD', linewidth=1, zorder=0, alpha=0.5
+            )
+
+        # Vertical line separating labels from plot
+        ax.axvline(x=-12, color='#CCCCCC', linewidth=1.5)
+
+        # Title
+        ax.text(
+            0.5, 1.08,
+            f'{role.capitalize()} Role: Self vs Peer Attribution',
+            transform=ax.transAxes,
+            ha='center', va='bottom',
+            fontsize=22, fontweight='bold'
+        )
+
+        # Set axis limits
+        ax.set_xlim(-12, 100)
+
+        # Create dynamic legend based on available sources
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w',
+                   label=source_display_labels[src],
+                   markerfacecolor=source_colors[src],
+                   markersize=12,
+                   markeredgecolor='white',
+                   markeredgewidth=2)
+            for src in available_sources
+        ]
+        ax.legend(handles=legend_elements, loc='lower right', fontsize=16, frameon=True,
+                 fancybox=False, shadow=False, framealpha=0.95, edgecolor='#CCCCCC')
+
+        # Always hide y-axis ticks and labels
+        ax.set_yticks([])
+        ax.tick_params(axis='y', which='both', left=False, labelleft=False)
+
+        # Show x-axis when value annotations are off
+        if not show_value_annotations_peer:
+            ax.set_xlabel('Percentage Share (%)', fontsize=18, fontweight='medium')
+            ax.tick_params(axis='x', which='major', labelsize=16, length=6, width=1.5,
+                          colors='#333333', pad=8)
+            ax.spines['bottom'].set_visible(True)
+            ax.spines['bottom'].set_color('#CCCCCC')
+            ax.spines['bottom'].set_linewidth(1.5)
+            # Set x-ticks
+            ax.set_xticks(range(0, 101, 10))
+            ax.set_xticklabels([f'{x}%' for x in range(0, 101, 10)])
+            # Add minor gridlines on x-axis
+            ax.grid(axis='x', which='major', color='#EEEEEE', linestyle='-', linewidth=1, alpha=0.7)
+            ax.tick_params(axis='x', which='both', bottom=True, labelbottom=True)
+        else:
+            # Hide x-axis when annotations are on
+            ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+
+        # Always keep top, right, left spines hidden
+        for spine in ['top', 'right', 'left']:
+            ax.spines[spine].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(
+        Path(ROOT) / "figures/all_roles_dumbbell_self_peer.png",
+        dpi=300,
+        bbox_inches='tight',
+        transparent=False
+    )
+    plt.show()
+
+    # %% Grouped Bar Chart: Self vs Peer attribution by Source (Treatment Effect)
+    # This plot shows how self and peer attribution differs between flooded and non-flooded municipalities
+
+    # Read the data from sheet 2
+    df_role_treatment = pd.read_excel(
+        Path(ROOT) / "data/survey_data/roles_comparisions.xlsx",
+        sheet_name=2,
+        engine="openpyxl"
+    )
+
+    # Define colors
+    ATTRIBUTION_COLORS = {
+        'Self - Flooded': '#D55E00',  # Vermillion
+        'Peer - Flooded': '#E69F00',  # Orange
+        'Self - Not Flooded': '#0072B2',  # Blue
+        'Peer - Not Flooded': '#009E73'   # Bluish Green
+    }
+
+    # Group by source, actor, role, and subjective role attribution
+    df_grouped = df_role_treatment.groupby(['source', 'actor', 'role', 'subjective role attribution']).agg({
+                                           'count': 'sum'}).reset_index()
+
+    # Calculate total counts per source and role
+    totals = df_grouped.groupby(['source', 'role'])['count'].sum().reset_index()
+    totals.rename(columns={'count': 'total'}, inplace=True)
+
+    # Merge to calculate percentages
+    df_grouped = df_grouped.merge(totals, on=['source', 'role'])
+    df_grouped['percentage'] = (df_grouped['count'] / df_grouped['total']) * 100
+
+    # Create a combined column for source + attribution
+    df_grouped['category'] = df_grouped['source'].str.replace(
+        'Flooded Municipality', 'Flooded') + ' - ' + df_grouped['subjective role attribution'].str.capitalize()
+
+    # Pivot to get each category as a column
+    df_pivot = df_grouped.pivot_table(
+        index=['actor', 'role'],
+        columns='category',
+        values='percentage',
+        fill_value=0
+    ).reset_index()
+
+    # Calculate average importance (sum of all attributions) for sorting
+    for col in ['Flooded - Self', 'Flooded - Peer', 'Not Flooded - Self', 'Not Flooded - Peer']:
+        if col not in df_pivot.columns:
+            df_pivot[col] = 0
+
+    df_pivot['avg_attribution'] = (df_pivot['Flooded - Self'] + df_pivot['Flooded - Peer'] +
+                                   df_pivot['Not Flooded - Self'] + df_pivot['Not Flooded - Peer']) / 4
+
+    # Create three separate plots, one for each role
+    role_titles = {'victim': 'Victim', 'villain': 'Villain', 'hero': 'Hero'}
+
+    for role in ['victim', 'villain', 'hero']:
+        # Create individual figure
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Filter data for this role
+        df_plot = df_pivot[df_pivot['role'] == role].copy()
+
+        if df_plot.empty:
+            print(f"No data for {role}")
+            plt.close(fig)
+            continue
+
+        # Sort by average attribution and select top 12
+        df_plot = df_plot.sort_values('avg_attribution', ascending=True).tail(12)
+
+        # Prepare data for plotting
+        actors = df_plot['actor'].values
+        n_actors = len(actors)
+        y_positions = np.arange(n_actors)
+
+        bar_height = 0.2
+
+        # Plot grouped bars
+        ax.barh(y_positions - 1.5*bar_height, df_plot['Flooded - Self'], bar_height,
+               label='Self - Flooded municipalities', color=ATTRIBUTION_COLORS['Self - Flooded'],
+               edgecolor='white', linewidth=1)
+        ax.barh(y_positions - 0.5*bar_height, df_plot['Flooded - Peer'], bar_height,
+               label='Peer - Flooded municipalities', color=ATTRIBUTION_COLORS['Peer - Flooded'],
+               edgecolor='white', linewidth=1)
+        ax.barh(y_positions + 0.5*bar_height, df_plot['Not Flooded - Self'], bar_height,
+               label='Self - Not flooded municipalities', color=ATTRIBUTION_COLORS['Self - Not Flooded'],
+               edgecolor='white', linewidth=1)
+        ax.barh(y_positions + 1.5*bar_height, df_plot['Not Flooded - Peer'], bar_height,
+               label='Peer - Not flooded municipalities', color=ATTRIBUTION_COLORS['Peer - Not Flooded'],
+               edgecolor='white', linewidth=1)
+
+        # Add percentage labels at the end of each bar
+        for i in range(n_actors):
+            # Flooded - Self
+            val = df_plot['Flooded - Self'].iloc[i]
+            if val > 0:
+                ax.text(val + 0.5, y_positions[i] - 1.5*bar_height, f'{val:.1f}%',
+                       va='center', ha='left', fontsize=10, color='#333333', )
+
+            # Flooded - Peer
+            val = df_plot['Flooded - Peer'].iloc[i]
+            if val > 0:
+                ax.text(val + 0.5, y_positions[i] - 0.5*bar_height, f'{val:.1f}%',
+                       va='center', ha='left', fontsize=10, color='#333333', )
+
+            # Not Flooded - Self
+            val = df_plot['Not Flooded - Self'].iloc[i]
+            if val > 0:
+                ax.text(val + 0.5, y_positions[i] + 0.5*bar_height, f'{val:.1f}%',
+                       va='center', ha='left', fontsize=10, color='#333333', )
+
+            # Not Flooded - Peer
+            val = df_plot['Not Flooded - Peer'].iloc[i]
+            if val > 0:
+                ax.text(val + 0.5, y_positions[i] + 1.5*bar_height, f'{val:.1f}%',
+                       va='center', ha='left', fontsize=10, color='#333333',)
+
+            # Add dotted line between Flooded group and Not Flooded group
+            ax.axhline(y=y_positions[i], color='#CCCCCC', linestyle=':',
+                      linewidth=1.5, alpha=0.7, zorder=0)
+
+        # Add horizontal separator lines between actor groups
+        for i in range(n_actors - 1):
+            line_y = (y_positions[i] + y_positions[i+1]) / 2
+            ax.axhline(y=line_y, color='#DDDDDD', linestyle='-', linewidth=1, alpha=0.5, zorder=0)
+
+        # Set actor names on y-axis
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels(actors, fontsize=14, color='#333333')
+
+        # Title and labels
+        ax.set_title(f'{role_titles[role]} Role Attribution: Self vs Peer by Flood Status',
+                    fontsize=18, fontweight='bold', pad=20, color='#2C3E50')
+
+        # Hide x-axis completely
+        ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+        ax.tick_params(axis='y', which='major', labelsize=13, colors='#333333')
+        ax.spines['bottom'].set_visible(False)
+
+        # Remove gridlines
+        ax.grid(False)
+
+        # Hide other spines
+        for spine in ['top', 'right', 'left']:
+            ax.spines[spine].set_visible(False)
+
+        # Set x-axis limits
+        ax.set_xlim(0, max(df_plot[['Flooded - Self', 'Flooded - Peer',
+                                     'Not Flooded - Self', 'Not Flooded - Peer']].max()) * 1.1)
+
+        # Add legend with reversed order
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(handles[::-1], labels[::-1], loc='lower right', frameon=True, fancybox=True,
+                 shadow=False, fontsize=11, framealpha=0.95,
+                 edgecolor='#CCCCCC', ncol=1)
+
+        plt.tight_layout()
+        plt.savefig(
+            Path(ROOT) / f"figures/role_{role}_grouped_bars_treatment_effect.png",
+            dpi=300,
+            bbox_inches='tight',
+            transparent=False
+        )
+        plt.show()
+        plt.close(fig)
+
+   # %%
+   def plot_single_role_trend(
         output_clean,
         role="hero",
         top_n=12,
@@ -1027,15 +1494,15 @@ if __name__ == "__main__":
 
         plt.show()
 
-#%%
+# %%
     for role in ['hero', 'villain', 'victim']:
         if role == 'hero':
-            top_n =7
+            top_n = 7
         elif role == 'villain':
-            top_n =3
+            top_n = 3
         else:
-            top_n =5
-        plot_single_role_trend(df_article, role=role, top_n=top_n,figure_export= Path(ROOT) / f"figures/{role}_trend.png", show_total_line=False)
+            top_n = 5
+        plot_single_role_trend(df_article, role=role, top_n=top_n, figure_export= Path(ROOT) / f"figures/{role}_trend.png", show_total_line=False)
 
 # %%
-# 
+#
